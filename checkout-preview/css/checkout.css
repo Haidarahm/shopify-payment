@@ -380,6 +380,26 @@ button {
   box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.15);
 }
 
+.field--error .field__input,
+.field--error .field__input:hover,
+.field--error .field__input:focus {
+  border-color: var(--color-error);
+}
+
+.field--error .field__input:focus {
+  box-shadow: 0 0 0 3px var(--color-error-soft);
+}
+
+.field__error {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--color-error);
+}
+
+.field__error[hidden] {
+  display: none;
+}
+
 .phone-input {
   display: flex;
   align-items: stretch;

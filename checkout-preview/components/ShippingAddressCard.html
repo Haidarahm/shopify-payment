@@ -34,9 +34,16 @@
 
   <button type="button" class="btn-outline" id="address-action-btn">Change Address</button>
 
-  <div class="field">
+  <div class="field" id="full-name-field">
     <label class="field__label" for="full-name">Full Name *</label>
-    <input class="field__input" id="full-name" type="text" value="Al Khuwair" readonly />
+    <input
+      class="field__input"
+      id="full-name"
+      type="text"
+      value="Al Khuwair"
+      aria-describedby="full-name-error"
+    />
+    <p class="field__error" id="full-name-error" hidden>Full name is required</p>
   </div>
 
   <div class="field">
