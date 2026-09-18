@@ -1,4 +1,9 @@
 const MAX_POINT_KM = 25;
+const MAX_RESULTS = 8;
+const MAP_URL = "./assets/map.geojson";
+
+let mapFeatures = null;
+let locationOptions = [];
 
 function toRad(deg) {
   return (deg * Math.PI) / 180;
@@ -20,7 +25,7 @@ function pointInRing(lng, lat, ring) {
     const [xj, yj] = ring[j];
     const intersect =
       yi > lat !== yj > lat &&
-      lng < ((xj - xi) * (lat - yi)) / (yj - yi + 0) + xi;
+      lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
     if (intersect) inside = !inside;
   }
   return inside;
@@ -99,12 +104,79 @@ function getPosition() {
   });
 }
 
-function showSetLocation() {
-  const btn = document.getElementById("address-action-btn");
-  if (btn) btn.textContent = "Set location";
+function buildLocationOptions(features) {
+  const seen = new Set();
+  const options = [];
 
-  const row = document.getElementById("shipping-address-row");
-  if (row) row.hidden = true;
+  for (const feature of features) {
+    const props = feature.properties || {};
+    const label = formatLocation(props);
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+
+    const searchText = [
+      props.Area,
+      props["Area-AR"],
+      props.State !== "." ? props.State : "",
+      props["State-AR"] !== "." ? props["State-AR"] : "",
+      props.Country,
+      props["Country-AR"],
+      label,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    options.push({ label, searchText });
+  }
+
+  return options;
+}
+
+async function loadMap() {
+  if (mapFeatures) return mapFeatures;
+  const res = await fetch(MAP_URL);
+  if (!res.ok) throw new Error("Failed to load map");
+  const map = await res.json();
+  mapFeatures = map.features || [];
+  locationOptions = buildLocationOptions(mapFeatures);
+  return mapFeatures;
+}
+
+function fuzzyScore(query, text) {
+  const q = query.toLowerCase().trim();
+  if (!q) return 0;
+  const t = text.toLowerCase();
+  if (t === q) return 100;
+  if (t.startsWith(q)) return 90;
+  if (t.includes(q)) return 75;
+
+  let qi = 0;
+  let gaps = 0;
+  let last = -1;
+  for (let i = 0; i < t.length && qi < q.length; i++) {
+    if (t[i] === q[qi]) {
+      if (last >= 0) gaps += i - last - 1;
+      last = i;
+      qi++;
+    }
+  }
+  if (qi !== q.length) return 0;
+  return Math.max(20, 55 - gaps);
+}
+
+function fuzzySearch(query) {
+  const q = query.trim();
+  if (!q) return [];
+
+  return locationOptions
+    .map((opt) => ({
+      ...opt,
+      score: Math.max(fuzzyScore(q, opt.label), fuzzyScore(q, opt.searchText) * 0.9),
+    }))
+    .filter((opt) => opt.score > 0)
+    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label))
+    .slice(0, MAX_RESULTS);
 }
 
 function clearAddressSkeleton(addressEl) {
@@ -113,20 +185,110 @@ function clearAddressSkeleton(addressEl) {
   addressEl.replaceChildren();
 }
 
+function showSetLocation() {
+  const btn = document.getElementById("address-action-btn");
+  if (btn) btn.textContent = "Set location";
+
+  const row = document.getElementById("shipping-address-row");
+  if (row) row.hidden = true;
+}
+
+function setAddress(label) {
+  const row = document.getElementById("shipping-address-row");
+  const addressEl = document.getElementById("shipping-address-text");
+  const btn = document.getElementById("address-action-btn");
+
+  if (addressEl) {
+    clearAddressSkeleton(addressEl);
+    addressEl.textContent = label;
+  }
+  if (row) row.hidden = false;
+  if (btn) {
+    btn.hidden = false;
+    btn.textContent = "Change Address";
+  }
+  closeLocationSearch();
+}
+
+function openLocationSearch() {
+  const panel = document.getElementById("location-search");
+  const input = document.getElementById("location-search-input");
+  const btn = document.getElementById("address-action-btn");
+  const row = document.getElementById("shipping-address-row");
+  const addressEl = document.getElementById("shipping-address-text");
+  if (!panel || !input) return;
+
+  if (row) row.hidden = true;
+  if (addressEl) {
+    clearAddressSkeleton(addressEl);
+    addressEl.textContent = "";
+  }
+
+  panel.classList.add("is-open");
+  panel.setAttribute("aria-hidden", "false");
+  if (btn) btn.hidden = true;
+
+  input.value = "";
+  renderResults([]);
+  requestAnimationFrame(() => input.focus());
+}
+
+function closeLocationSearch() {
+  const panel = document.getElementById("location-search");
+  const input = document.getElementById("location-search-input");
+  if (!panel) return;
+
+  panel.classList.remove("is-open");
+  panel.setAttribute("aria-hidden", "true");
+  if (input) input.value = "";
+  renderResults([]);
+}
+
+function renderResults(matches) {
+  const list = document.getElementById("location-search-results");
+  if (!list) return;
+
+  list.replaceChildren();
+  for (const match of matches) {
+    const li = document.createElement("li");
+    li.className = "location-search__option";
+    li.setAttribute("role", "option");
+    li.textContent = match.label;
+    li.tabIndex = 0;
+    li.addEventListener("click", () => setAddress(match.label));
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setAddress(match.label);
+      }
+    });
+    list.appendChild(li);
+  }
+}
+
+function wireLocationSearch() {
+  const btn = document.getElementById("address-action-btn");
+  const input = document.getElementById("location-search-input");
+  if (!btn || !input) return;
+
+  btn.addEventListener("click", () => {
+    openLocationSearch();
+  });
+
+  input.addEventListener("input", () => {
+    renderResults(fuzzySearch(input.value));
+  });
+}
+
 export async function resolveShippingAddress() {
   const addressEl = document.getElementById("shipping-address-text");
   if (!addressEl) return;
 
+  wireLocationSearch();
+
   try {
-    const [{ latitude, longitude }, mapRes] = await Promise.all([
-      getPosition(),
-      fetch("./assets/map.geojson"),
-    ]);
-
-    if (!mapRes.ok) throw new Error("Failed to load map");
-
-    const map = await mapRes.json();
-    const label = matchLocation(latitude, longitude, map.features || []);
+    const [coords, features] = await Promise.all([getPosition(), loadMap()]);
+    const label = matchLocation(coords.latitude, coords.longitude, features);
 
     clearAddressSkeleton(addressEl);
 
@@ -136,6 +298,11 @@ export async function resolveShippingAddress() {
       showSetLocation();
     }
   } catch {
+    try {
+      await loadMap();
+    } catch {
+      /* map optional for set-location UI */
+    }
     clearAddressSkeleton(addressEl);
     showSetLocation();
   }
