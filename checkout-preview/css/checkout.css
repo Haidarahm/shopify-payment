@@ -231,7 +231,6 @@ button {
 }
 
 .btn-outline--sm {
-  width: auto;
   padding: 8px 14px;
   font-size: 0.85rem;
   background: var(--color-surface);
