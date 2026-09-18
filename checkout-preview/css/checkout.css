@@ -390,6 +390,20 @@ button {
   box-shadow: 0 0 0 3px var(--color-error-soft);
 }
 
+.field--error .phone-input,
+.field--error .phone-input:hover {
+  border-color: var(--color-error);
+}
+
+.field--error .phone-input:focus-within {
+  box-shadow: 0 0 0 3px var(--color-error-soft);
+}
+
+.field--error .phone-input__prefix {
+  border-right-color: var(--color-error);
+  background: var(--color-error-soft);
+}
+
 .field__error {
   margin: 6px 0 0;
   font-size: 0.8rem;

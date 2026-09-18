@@ -20,10 +20,10 @@ async function mountComponent(name) {
   target.innerHTML = await response.text();
 }
 
-function wireFullNameValidation() {
-  const input = document.getElementById("full-name");
-  const field = document.getElementById("full-name-field");
-  const error = document.getElementById("full-name-error");
+function wireRequiredField(inputId, fieldId, errorId) {
+  const input = document.getElementById(inputId);
+  const field = document.getElementById(fieldId);
+  const error = document.getElementById(errorId);
   if (!input || !field || !error) return;
 
   const validate = () => {
@@ -38,5 +38,6 @@ function wireFullNameValidation() {
 }
 
 await Promise.all(COMPONENTS.map(mountComponent));
-wireFullNameValidation();
+wireRequiredField("full-name", "full-name-field", "full-name-error");
+wireRequiredField("phone-number", "phone-number-field", "phone-number-error");
 await resolveShippingAddress();

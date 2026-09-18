@@ -46,7 +46,7 @@
     <p class="field__error" id="full-name-error" hidden>Full name is required</p>
   </div>
 
-  <div class="field">
+  <div class="field" id="phone-number-field">
     <label class="field__label" for="phone-number">Phone number *</label>
     <div class="phone-input">
       <span class="phone-input__prefix">
@@ -63,8 +63,9 @@
         id="phone-number"
         type="tel"
         placeholder="9XXX XXXX"
-        readonly
+        aria-describedby="phone-number-error"
       />
     </div>
+    <p class="field__error" id="phone-number-error" hidden>Phone number is required</p>
   </div>
 </section>
