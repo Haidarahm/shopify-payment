@@ -196,16 +196,60 @@ button {
 /* —— Shipping —— */
 .address-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   margin: 0 0 12px;
   font-size: 0.9rem;
   color: var(--color-text);
   line-height: 1.35;
+  min-height: 1.35em;
+}
+
+.address-row[hidden] {
+  display: none;
 }
 
 .address-row .icon {
-  margin-top: 1px;
+  margin-top: 0;
+}
+
+.skeleton-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.skeleton-text__line {
+  display: block;
+  width: 85%;
+  height: 0.7em;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.06) 25%,
+    rgba(0, 0, 0, 0.1) 37%,
+    rgba(0, 0, 0, 0.06) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-text__line {
+    animation: none;
+    background: rgba(0, 0, 0, 0.08);
+  }
 }
 
 .btn-outline {

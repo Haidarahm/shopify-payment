@@ -1,3 +1,5 @@
+import { resolveShippingAddress } from "./location.js";
+
 const COMPONENTS = [
   "CheckoutHeader",
   "OrderItemsCard",
@@ -19,3 +21,4 @@ async function mountComponent(name) {
 }
 
 await Promise.all(COMPONENTS.map(mountComponent));
+await resolveShippingAddress();
