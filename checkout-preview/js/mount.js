@@ -42,6 +42,5 @@ function wireRequiredField(inputId, fieldId, errorId) {
 await Promise.all(COMPONENTS.map(mountComponent));
 renderOrderItems();
 wireRequiredField("full-name", "full-name-field", "full-name-error");
-wireRequiredField("phone-number", "phone-number-field", "phone-number-error");
 wirePhoneCountryPicker();
 await resolveShippingAddress();
