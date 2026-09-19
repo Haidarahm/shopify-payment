@@ -79,7 +79,7 @@ button {
 
 /* —— Cards —— */
 .card {
-  background: var(--color-surface);
+  background: var(--color-card);
   border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-card);
   padding: var(--space-card);
@@ -188,7 +188,7 @@ button {
 .order-item__price {
   margin: 8px 0 0;
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: 400;
   color: var(--color-primary);
   white-space: nowrap;
 }
@@ -358,6 +358,10 @@ button {
   font-size: 0.8rem;
   font-weight: 700;
   color: var(--color-text);
+}
+
+.required {
+  color: var(--color-error);
 }
 
 .field__input {
