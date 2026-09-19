@@ -226,7 +226,7 @@ function openLocationSheet() {
 function closeLocationSheet() {
   const sheet = document.getElementById("location-sheet");
   const input = document.getElementById("location-search-input");
-  if (!sheet) return;
+  if (!sheet?.classList.contains("is-open")) return;
 
   sheet.classList.remove("is-open");
   sheet.setAttribute("aria-hidden", "true");

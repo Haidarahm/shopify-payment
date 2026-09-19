@@ -512,20 +512,64 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin: 0;
   padding: 0 10px;
   background: var(--color-primary-soft);
   color: var(--color-text);
+  font: inherit;
   font-size: 0.85rem;
   font-weight: 600;
   white-space: nowrap;
+  border: none;
   border-right: 1.5px solid var(--color-primary);
+  cursor: pointer;
+}
+
+.phone-input__prefix:hover,
+.phone-input__prefix:focus-visible {
+  background: #e8f5e9;
+  outline: none;
 }
 
 .phone-input__flag {
   width: 20px;
-  height: 14px;
+  height: 15px;
+  object-fit: cover;
   border-radius: 2px;
   display: block;
+  flex-shrink: 0;
+}
+
+.phone-input__chevron {
+  width: 10px;
+  height: 10px;
+  opacity: 0.65;
+}
+
+.country-option__flag {
+  width: 22px;
+  height: 16px;
+  object-fit: cover;
+  border-radius: 2px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.country-option__name {
+  flex: 1;
+  min-width: 0;
+}
+
+.country-option__dial {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.location-sheet__option[aria-selected="true"] {
+  background: var(--color-primary-soft);
+  font-weight: 600;
 }
 
 .phone-input__field {

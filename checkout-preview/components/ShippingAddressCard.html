@@ -36,15 +36,28 @@
   <div class="field" id="phone-number-field">
     <label class="field__label" for="phone-number">Phone number <span class="required">*</span></label>
     <div class="phone-input">
-      <span class="phone-input__prefix">
-        <svg class="phone-input__flag" viewBox="0 0 20 14" aria-hidden="true">
-          <rect width="20" height="14" rx="1" fill="#C8102E" />
-          <rect y="4.67" width="20" height="4.66" fill="#FFFFFF" />
-          <rect y="9.33" width="20" height="4.67" fill="#00843D" />
-          <rect width="5" height="14" fill="#C8102E" />
+      <button
+        type="button"
+        class="phone-input__prefix"
+        id="phone-prefix-btn"
+        aria-haspopup="dialog"
+        aria-controls="country-sheet"
+        aria-label="Select country code"
+      >
+        <img
+          class="phone-input__flag"
+          id="phone-prefix-flag"
+          src="https://flagcdn.com/w40/om.png"
+          alt=""
+          width="20"
+          height="15"
+          decoding="async"
+        />
+        <span id="phone-prefix-code">+968</span>
+        <svg class="phone-input__chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M3 4.5L6 7.5L9 4.5" />
         </svg>
-        +968
-      </span>
+      </button>
       <input
         class="field__input phone-input__field"
         id="phone-number"
