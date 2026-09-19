@@ -167,7 +167,9 @@ function fuzzyScore(query, text) {
 
 function fuzzySearch(query) {
   const q = query.trim();
-  if (!q) return [];
+  if (!q) {
+    return locationOptions.slice(0, MAX_RESULTS);
+  }
 
   return locationOptions
     .map((opt) => ({
@@ -203,46 +205,38 @@ function setAddress(label) {
     addressEl.textContent = label;
   }
   if (row) row.hidden = false;
-  if (btn) {
-    btn.hidden = false;
-    btn.textContent = "Change Address";
-  }
-  closeLocationSearch();
+  if (btn) btn.textContent = "Change Address";
+  closeLocationSheet();
 }
 
-function openLocationSearch() {
-  const panel = document.getElementById("location-search");
+function openLocationSheet() {
+  const sheet = document.getElementById("location-sheet");
   const input = document.getElementById("location-search-input");
-  const btn = document.getElementById("address-action-btn");
-  const row = document.getElementById("shipping-address-row");
-  const addressEl = document.getElementById("shipping-address-text");
-  if (!panel || !input) return;
+  if (!sheet || !input) return;
 
-  if (row) row.hidden = true;
-  if (addressEl) {
-    clearAddressSkeleton(addressEl);
-    addressEl.textContent = "";
-  }
-
-  panel.classList.add("is-open");
-  panel.setAttribute("aria-hidden", "false");
-  if (btn) btn.hidden = true;
+  sheet.classList.add("is-open");
+  sheet.setAttribute("aria-hidden", "false");
+  document.body.style.overflow = "hidden";
 
   input.value = "";
-  renderResults([]);
+  renderResults(fuzzySearch(""));
   requestAnimationFrame(() => input.focus());
 }
 
-function closeLocationSearch() {
-  const panel = document.getElementById("location-search");
+function closeLocationSheet() {
+  const sheet = document.getElementById("location-sheet");
   const input = document.getElementById("location-search-input");
-  if (!panel) return;
+  if (!sheet) return;
 
-  panel.classList.remove("is-open");
-  panel.setAttribute("aria-hidden", "true");
+  sheet.classList.remove("is-open");
+  sheet.setAttribute("aria-hidden", "true");
+  document.body.style.overflow = "";
   if (input) input.value = "";
   renderResults([]);
 }
+
+const PIN_SVG =
+  '<svg class="location-sheet__option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-6.2 7-12a7 7 0 10-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>';
 
 function renderResults(matches) {
   const list = document.getElementById("location-search-results");
@@ -251,10 +245,13 @@ function renderResults(matches) {
   list.replaceChildren();
   for (const match of matches) {
     const li = document.createElement("li");
-    li.className = "location-search__option";
+    li.className = "location-sheet__option";
     li.setAttribute("role", "option");
-    li.textContent = match.label;
     li.tabIndex = 0;
+    li.innerHTML = PIN_SVG;
+    const span = document.createElement("span");
+    span.textContent = match.label;
+    li.appendChild(span);
     li.addEventListener("click", () => setAddress(match.label));
     li.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -269,14 +266,23 @@ function renderResults(matches) {
 function wireLocationSearch() {
   const btn = document.getElementById("address-action-btn");
   const input = document.getElementById("location-search-input");
+  const backdrop = document.getElementById("location-sheet-backdrop");
   if (!btn || !input) return;
 
   btn.addEventListener("click", () => {
-    openLocationSearch();
+    openLocationSheet();
   });
 
   input.addEventListener("input", () => {
     renderResults(fuzzySearch(input.value));
+  });
+
+  backdrop?.addEventListener("click", () => {
+    closeLocationSheet();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeLocationSheet();
   });
 }
 

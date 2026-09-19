@@ -14,6 +14,35 @@
       <div data-component="ShippingAddressCard"></div>
       <div data-component="OrderSummaryCard"></div>
     </main>
+
+    <div class="location-sheet" id="location-sheet" aria-hidden="true">
+      <div class="location-sheet__backdrop" id="location-sheet-backdrop"></div>
+      <div
+        class="location-sheet__panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="location-sheet-title"
+      >
+        <h2 id="location-sheet-title" class="location-sheet__title">Select Location on Map</h2>
+        <p class="location-sheet__subtitle">Add an location for this order</p>
+        <label class="location-sheet__search" for="location-search-input">
+          <svg class="location-sheet__search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M20 20l-3.5-3.5" />
+          </svg>
+          <input
+            id="location-search-input"
+            class="location-sheet__input"
+            type="search"
+            placeholder="Search for locations"
+            autocomplete="off"
+            aria-controls="location-search-results"
+          />
+        </label>
+        <ul class="location-sheet__results" id="location-search-results" role="listbox"></ul>
+      </div>
+    </div>
+
     <script type="module" src="./js/mount.js"></script>
   </body>
 </html>
