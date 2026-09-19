@@ -1,6 +1,6 @@
 <section class="card" aria-labelledby="order-items-title">
   <div class="card__header">
-    <h2 id="order-items-title" class="card__title">Order items (3)</h2>
+    <h2 id="order-items-title" class="card__title">Order items</h2>
     <button type="button" class="icon-btn" aria-label="Add">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
         <path d="M12 5v14M5 12h14" />
@@ -8,18 +8,6 @@
     </button>
   </div>
   <p class="card__subtitle">Add an address for this order</p>
-  <div class="order-items">
-    <article class="order-item">
-      <div class="order-item__thumb order-item__thumb--a" role="img" aria-label="Order item 1"></div>
-      <p class="order-item__price">12.000 OMR</p>
-    </article>
-    <article class="order-item">
-      <div class="order-item__thumb order-item__thumb--b" role="img" aria-label="Order item 2"></div>
-      <p class="order-item__price">14.000 OMR</p>
-    </article>
-    <article class="order-item">
-      <div class="order-item__thumb order-item__thumb--c" role="img" aria-label="Order item 3"></div>
-      <p class="order-item__price">5.400 OMR</p>
-    </article>
-  </div>
+  <hr class="card__divider" />
+  <div class="order-items" id="order-items-list"></div>
 </section>

@@ -1,4 +1,5 @@
 import { resolveShippingAddress } from "./location.js";
+import { renderOrderItems } from "./orderItems.js";
 
 const COMPONENTS = [
   "CheckoutHeader",
@@ -38,6 +39,7 @@ function wireRequiredField(inputId, fieldId, errorId) {
 }
 
 await Promise.all(COMPONENTS.map(mountComponent));
+renderOrderItems();
 wireRequiredField("full-name", "full-name-field", "full-name-error");
 wireRequiredField("phone-number", "phone-number-field", "phone-number-error");
 await resolveShippingAddress();

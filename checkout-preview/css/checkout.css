@@ -50,8 +50,8 @@ button {
   height: 40px;
   border: none;
   border-radius: 50%;
-  background: var(--color-primary-soft);
-  color: var(--color-primary-dark);
+  background: #e8e8e8;
+  color: #2a2a2a;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -59,7 +59,7 @@ button {
 }
 
 .back-btn:hover {
-  background: var(--color-primary-soft-hover);
+  background: #dedede;
   box-shadow: var(--shadow-soft);
   transform: translateY(-1px);
 }
@@ -102,9 +102,16 @@ button {
 }
 
 .card__subtitle {
-  margin: 0 0 14px;
+  margin: 0;
   font-size: 0.8rem;
   color: var(--color-text-muted);
+}
+
+.card__divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 12px 0;
+  opacity: 0.55;
 }
 
 .icon-btn {
@@ -152,7 +159,17 @@ button {
   display: flex;
   gap: 14px;
   overflow-x: auto;
+  overflow-y: hidden;
   padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.order-items::-webkit-scrollbar {
+  display: none;
 }
 
 .order-item {
@@ -165,20 +182,10 @@ button {
   width: 72px;
   height: 72px;
   border-radius: var(--radius-thumb);
-  background: #ececec;
+  object-fit: cover;
+  background: #ffffff;
+  display: block;
   transition: transform 0.15s ease;
-}
-
-.order-item__thumb--a {
-  background: #c8e6c9;
-}
-
-.order-item__thumb--b {
-  background: #ffe0b2;
-}
-
-.order-item__thumb--c {
-  background: #bbdefb;
 }
 
 .order-item:hover .order-item__thumb {
