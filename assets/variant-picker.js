@@ -1,597 +1,412 @@
-import { Component } from '@theme/component';
-import { morph, MORPH_OPTIONS } from '@theme/morph';
-import { OverflowList } from '@theme/overflow-list';
-import { yieldToMainThread, getViewParameterValue, ResizeNotifier } from '@theme/utilities';
-import { ProductSelectEvent } from '@shopify/events';
-
 /**
- * @typedef {object} VariantPickerRefs
- * @property {HTMLFieldSetElement[]} fieldsets - The fieldset elements.
- * @property {HTMLElement} [overflowList] - The overflow list element.
- */
-
-/**
- * A custom element that manages a variant picker.
+ * Dependencies:
+ * - Custom select component
  *
- * @template {import('@theme/component').Refs} [TRefs=VariantPickerRefs]
- * @extends Component<TRefs>
+ * Required translation strings:
+ * - addToCart
+ * - noStock
+ * - noVariant
+ * - onlyXLeft
  */
-export default class VariantPicker extends Component {
-  /** @type {string | undefined} */
-  #pendingRequestUrl;
-
-  /** @type {AbortController | undefined} */
-  #abortController;
-
-  /** @type {number[][]} */
-  #checkedIndices = [];
-
-  /** @type {HTMLInputElement[][]} */
-  #radios = [];
-
-  #resizeObserver = new ResizeNotifier(() => this.updateVariantPickerCss());
-
-  connectedCallback() {
-    super.connectedCallback();
-    const fieldsets = /** @type {HTMLFieldSetElement[]} */ (this.refs.fieldsets || []);
-
-    fieldsets.forEach((fieldset) => {
-      const radios = Array.from(fieldset?.querySelectorAll('input') ?? []);
-      this.#radios.push(radios);
-
-      const initialCheckedIndex = radios.findIndex((radio) => radio.dataset.currentChecked === 'true');
-      if (initialCheckedIndex !== -1) {
-        this.#checkedIndices.push([initialCheckedIndex]);
-      }
-    });
-
-    this.addEventListener('change', this.variantChanged.bind(this));
-    this.#resizeObserver.observe(this);
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    this.#resizeObserver.disconnect();
-  }
-
-  /**
-   * Handles the variant change event.
-   * @param {Event} event - The variant change event.
-   */
-  variantChanged(event) {
-    if (!(event.target instanceof HTMLElement)) return;
-
-    const selectedOption =
-      event.target instanceof HTMLSelectElement ? event.target.options[event.target.selectedIndex] : event.target;
-
-    if (!selectedOption) return;
-
-    this.updateSelectedOption(event.target);
-
-    const isOnProductPage =
-      this.dataset.templateProductMatch === 'true' &&
-      !event.target.closest('product-card') &&
-      !event.target.closest('quick-add-dialog');
-
-    // Morph the entire main content for combined listings child products, because changing the product
-    // might also change other sections depending on recommendations, metafields, etc.
-    const currentUrl = this.dataset.productUrl?.split('?')[0];
-    const newUrl = selectedOption.dataset.connectedProductUrl;
-    const loadsNewProduct = isOnProductPage && !!newUrl && newUrl !== currentUrl;
-    const isOnFeaturedProductSection = Boolean(this.closest('featured-product-information'));
-
-    const morphElementSelector = loadsNewProduct
-      ? 'main'
-      : isOnFeaturedProductSection
-      ? 'featured-product-information'
-      : undefined;
-
-    const { optionValueId = '', variantId = '', connectedProductUrl = '' } = selectedOption.dataset;
-    this.fetchUpdatedSection(this.buildRequestUrl(selectedOption), {
-      morphElementSelector,
-      detail: { optionValueId, variantId, connectedProductUrl },
-    });
-
-    const url = new URL(window.location.href);
-
-    if (isOnProductPage) {
-      if (variantId) {
-        url.searchParams.set('variant', variantId);
-      } else {
-        url.searchParams.delete('variant');
-      }
-    }
-
-    // Change the path if the option is connected to another product via combined listing.
-    if (loadsNewProduct) {
-      url.pathname = newUrl;
-    }
-
-    if (url.href !== window.location.href) {
-      yieldToMainThread().then(() => {
-        history.replaceState({}, '', url.toString());
-      });
-    }
-  }
-
-  /**
-   * @typedef {object} FieldsetMeasurements
-   * @property {HTMLFieldSetElement} fieldset
-   * @property {number | undefined} currentIndex
-   * @property {number | undefined} previousIndex
-   * @property {number | undefined} currentWidth
-   * @property {number | undefined} previousWidth
-   */
-
-  /**
-   * Gets measurements for a single fieldset (read phase).
-   * @param {number} fieldsetIndex
-   * @returns {FieldsetMeasurements | null}
-   */
-  #getFieldsetMeasurements(fieldsetIndex) {
-    const fieldsets = /** @type {HTMLFieldSetElement[]} */ (this.refs.fieldsets || []);
-    const fieldset = fieldsets[fieldsetIndex];
-    const checkedIndices = this.#checkedIndices[fieldsetIndex];
-    const radios = this.#radios[fieldsetIndex];
-
-    if (!radios || !checkedIndices || !fieldset) return null;
-
-    const [currentIndex, previousIndex] = checkedIndices;
-
-    return {
-      fieldset,
-      currentIndex,
-      previousIndex,
-      currentWidth: currentIndex !== undefined ? radios[currentIndex]?.parentElement?.offsetWidth : undefined,
-      previousWidth: previousIndex !== undefined ? radios[previousIndex]?.parentElement?.offsetWidth : undefined,
-    };
-  }
-
-  /**
-   * Applies measurements to a fieldset (write phase).
-   * @param {FieldsetMeasurements} measurements
-   */
-  #applyFieldsetMeasurements({ fieldset, currentWidth, previousWidth, currentIndex, previousIndex }) {
-    if (currentWidth) {
-      fieldset.style.setProperty('--pill-width-current', `${currentWidth}px`);
-    } else if (currentIndex !== undefined) {
-      fieldset.style.removeProperty('--pill-width-current');
-    }
-
-    if (previousWidth) {
-      fieldset.style.setProperty('--pill-width-previous', `${previousWidth}px`);
-    } else if (previousIndex !== undefined) {
-      fieldset.style.removeProperty('--pill-width-previous');
-    }
-  }
-
-  /**
-   * Updates the fieldset CSS.
-   * @param {number} fieldsetIndex - The fieldset index.
-   */
-  updateFieldsetCss(fieldsetIndex) {
-    if (Number.isNaN(fieldsetIndex)) return;
-
-    const measurements = this.#getFieldsetMeasurements(fieldsetIndex);
-    if (measurements) {
-      this.#applyFieldsetMeasurements(measurements);
-    }
-  }
-
-  /**
-   * Updates the selected option.
-   * @param {string | Element} target - The target element.
-   */
-  updateSelectedOption(target) {
-    if (typeof target === 'string') {
-      const targetElement = this.querySelector(`[data-option-value-id="${target}"]`);
-
-      if (!targetElement) throw new Error('Target element not found');
-
-      target = targetElement;
-    }
-
-    if (target instanceof HTMLInputElement) {
-      const fieldsetIndex = Number.parseInt(target.dataset.fieldsetIndex || '');
-      const inputIndex = Number.parseInt(target.dataset.inputIndex || '');
-
-      if (!Number.isNaN(fieldsetIndex) && !Number.isNaN(inputIndex)) {
-        const fieldsets = /** @type {HTMLFieldSetElement[]} */ (this.refs.fieldsets || []);
-        const fieldset = fieldsets[fieldsetIndex];
-        const checkedIndices = this.#checkedIndices[fieldsetIndex];
-        const radios = this.#radios[fieldsetIndex];
-
-        if (radios && checkedIndices && fieldset) {
-          // Clear previous checked states
-          const [currentIndex, previousIndex] = checkedIndices;
-
-          if (currentIndex !== undefined && radios[currentIndex]) {
-            radios[currentIndex].dataset.previousChecked = 'false';
-          }
-          if (previousIndex !== undefined && radios[previousIndex]) {
-            radios[previousIndex].dataset.previousChecked = 'false';
-          }
-
-          // Update checked indices array - keep only the last 2 selections
-          checkedIndices.unshift(inputIndex);
-          checkedIndices.length = Math.min(checkedIndices.length, 2);
-
-          // Update the new states
-          const newCurrentIndex = checkedIndices[0]; // This is always inputIndex
-          const newPreviousIndex = checkedIndices[1]; // This might be undefined
-
-          // newCurrentIndex is guaranteed to exist since we just added it
-          if (newCurrentIndex !== undefined && radios[newCurrentIndex]) {
-            radios[newCurrentIndex].dataset.currentChecked = 'true';
-          }
-
-          if (newPreviousIndex !== undefined && radios[newPreviousIndex]) {
-            radios[newPreviousIndex].dataset.previousChecked = 'true';
-            radios[newPreviousIndex].dataset.currentChecked = 'false';
-          }
-
-          this.updateFieldsetCss(fieldsetIndex);
-        }
-      }
-      target.checked = true;
-    }
-
-    if (target instanceof HTMLSelectElement) {
-      const newValue = target.value;
-      const newSelectedOption = Array.from(target.options).find((option) => option.value === newValue);
-
-      if (!newSelectedOption) throw new Error('Option not found');
-
-      for (const option of target.options) {
-        option.removeAttribute('selected');
-      }
-
-      newSelectedOption.setAttribute('selected', 'selected');
-    }
-  }
-
-  /**
-   * Builds the request URL.
-   * @param {HTMLElement} selectedOption - The selected option.
-   * @param {string | null} [source] - The source.
-   * @param {string[]} [sourceSelectedOptionsValues] - The source selected options values.
-   * @returns {string} The request URL.
-   */
-  buildRequestUrl(selectedOption, source = null, sourceSelectedOptionsValues = []) {
-    // this productUrl and pendingRequestUrl will be useful for the support of combined listing. It is used when a user changes variant quickly and those products are using separate URLs (combined listing).
-    // We create a new URL and abort the previous fetch request if it's still pending.
-    let productUrl = selectedOption.dataset.connectedProductUrl || this.#pendingRequestUrl || this.dataset.productUrl;
-    this.#pendingRequestUrl = productUrl;
-    const params = [];
-    const viewParamValue = getViewParameterValue();
-
-    // preserve view parameter, if it exists, for alternative product view testing
-    if (viewParamValue) params.push(`view=${viewParamValue}`);
-
-    if (this.selectedOptionsValues.length && !source) {
-      params.push(`option_values=${this.selectedOptionsValues.join(',')}`);
-    } else if (source === 'product-card') {
-      if (this.selectedOptionsValues.length) {
-        params.push(`option_values=${sourceSelectedOptionsValues.join(',')}`);
-      } else {
-        params.push(`option_values=${selectedOption.dataset.optionValueId}`);
-      }
-    }
-
-    // If variant-picker is a child of some specific sections, we need to append section_id=xxxx to the URL
-    const SECTION_ID_MAP = {
-      'quick-add-component': 'section-rendering-product-card',
-      'swatches-variant-picker-component': 'section-rendering-product-card',
-      'featured-product-information': this.closest('featured-product-information')?.id,
-    };
-
-    const closestSectionId = /** @type {keyof typeof SECTION_ID_MAP} | undefined */ (
-      Object.keys(SECTION_ID_MAP).find((sectionId) => this.closest(sectionId))
-    );
-
-    if (closestSectionId) {
-      if (productUrl?.includes('?')) {
-        productUrl = productUrl.split('?')[0];
-      }
-      return `${productUrl}?section_id=${SECTION_ID_MAP[closestSectionId]}&${params.join('&')}`;
-    }
-
-    return `${productUrl}?${params.join('&')}`;
-  }
-
-  /**
-   * Fetches the updated section.
-   * @param {string} requestUrl - The request URL.
-   * @param {object} [options] - Request options.
-   * @param {string} [options.morphElementSelector] - The selector of the element to be morphed. By default, only the variant picker is morphed.
-   * @param {{ optionValueId?: string, variantId?: string, connectedProductUrl?: string }} [options.detail] - Synchronous product select event detail.
-   */
-  fetchUpdatedSection(requestUrl, { morphElementSelector, detail = {} } = {}) {
-    const { optionValueId = '', variantId, connectedProductUrl = '' } = detail;
-    // We use this to abort the previous fetch request if it's still pending.
-    this.#abortController?.abort();
-    this.#abortController = new AbortController();
-
-    const deferredEventPromise = ProductSelectEvent.createPromise();
-    const selectedOptions = this.getAllSelectedOptions();
-
-    this.dispatchEvent(
-      new ProductSelectEvent({
-        product: {
-          id: this.dataset.productId ?? '',
-          title: this.dataset.productTitle ?? '',
-          handle: this.dataset.productHandle ?? '',
-        },
-        selectedOptions,
-        detail: {
-          optionValueId,
-          variantId,
-          connectedProductUrl,
-        },
-        promise: deferredEventPromise.promise,
-      })
-    );
-
-    fetch(requestUrl, { signal: this.#abortController.signal })
-      .then((response) => response.text())
-      .then((responseText) => {
-        this.#pendingRequestUrl = undefined;
-        const html = new DOMParser().parseFromString(responseText, 'text/html');
-        // Defer is only useful for the initial rendering of the page. Remove it here.
-        html.querySelector('overflow-list[defer]')?.removeAttribute('defer');
-
-        const variantPickerJsonScript = html.querySelector(`variant-picker script[type="application/json"]`);
-        const textContent = variantPickerJsonScript?.textContent;
-
-        if (!textContent) {
-          deferredEventPromise.resolve({
-            variant: null,
-            detail: {
-              html,
-              productId: this.dataset.productId ?? '',
-              sourceId: this.selectedOptionId,
-              resource: null,
-            },
-          });
-          return;
-        }
-
-        let newProduct;
-
-        if (morphElementSelector === 'main') {
-          this.updateMain(html);
-        } else if (morphElementSelector) {
-          this.updateElement(html, morphElementSelector);
-        } else {
-          const { overflowList } = this.refs;
-          const wasSwatchesExpanded =
-            overflowList instanceof OverflowList && overflowList.getAttribute('disabled') === 'true';
-
-          newProduct = this.updateVariantPicker(html);
-
-          if (wasSwatchesExpanded) {
-            const overflowListAfterMorph = overflowList;
-            if (overflowListAfterMorph instanceof OverflowList) {
-              overflowListAfterMorph.showAll();
-            }
-          }
-        }
-
-        // Resolve the ProductSelectEvent promise with all data needed by listeners
-        if (this.selectedOptionId) {
-          const variantData = JSON.parse(textContent);
-
-          if (variantData && typeof variantData === 'object') {
-            const productViewAttr = variantPickerJsonScript
-              ?.closest('[view-event-payload]')
-              ?.getAttribute('view-event-payload')
-              ?.trim();
-
-            deferredEventPromise.resolve({
-              variant: (productViewAttr && JSON.parse(productViewAttr))?.product?.selectedVariant ?? null,
-              detail: {
-                html,
-                productId: this.dataset.productId ?? '',
-                newProduct,
-                sourceId: this.selectedOptionId,
-                resource: variantData,
-              },
-            });
-
-            return;
-          }
-        }
-
-        // Variant data is null/invalid (e.g. unavailable variant combination) —
-        // still include detail with html so listeners can update UI (disable buttons, morph text)
-        deferredEventPromise.resolve({
-          variant: null,
-          detail: {
-            html,
-            productId: this.dataset.productId ?? '',
-            newProduct,
-            sourceId: this.selectedOptionId,
-            resource: null,
-          },
-        });
-      })
-      .catch((error) => {
-        deferredEventPromise.reject(error);
-        if (error.name === 'AbortError') {
-          console.warn('Fetch aborted by user');
-        } else {
-          console.error(error);
-        }
-      });
-  }
-
-  /**
-   * @typedef {Object} NewProduct
-   * @property {string} id
-   * @property {string} url
-   */
-
-  /**
-   * Re-renders the variant picker.
-   * @param {Document | Element} newHtml - The new HTML.
-   * @returns {NewProduct | undefined} Information about the new product if it has changed, otherwise undefined.
-   */
-  updateVariantPicker(newHtml) {
-    /** @type {NewProduct | undefined} */
-    let newProduct;
-
-    const newVariantPickerSource = newHtml.querySelector(this.tagName.toLowerCase());
-
-    if (!newVariantPickerSource) {
-      throw new Error('No new variant picker source found');
-    }
-
-    // For combined listings, the product might have changed, so update the related data attribute.
-    if (newVariantPickerSource instanceof HTMLElement) {
-      const newProductId = newVariantPickerSource.dataset.productId;
-      const newProductUrl = newVariantPickerSource.dataset.productUrl;
-
-      if (newProductId && newProductUrl && this.dataset.productId !== newProductId) {
-        newProduct = { id: newProductId, url: newProductUrl };
-      }
-
-      this.dataset.productId = newProductId;
-      this.dataset.productUrl = newProductUrl;
-    }
-
-    morph(this, newVariantPickerSource, {
-      ...MORPH_OPTIONS,
-      getNodeKey: (node) => {
-        if (!(node instanceof HTMLElement)) return undefined;
-        const key = node.dataset.key;
-        return key;
-      },
-    });
-    this.updateVariantPickerCss();
-
-    return newProduct;
-  }
-
-  updateVariantPickerCss() {
-    const fieldsets = /** @type {HTMLFieldSetElement[]} */ (this.refs.fieldsets || []);
-
-    // Batch all reads first across all fieldsets to avoid layout thrashing
-    const measurements = fieldsets.map((_, index) => this.#getFieldsetMeasurements(index)).filter((m) => m !== null);
-
-    // Batch all writes after all reads
-    for (const measurement of measurements) {
-      this.#applyFieldsetMeasurements(measurement);
-    }
-  }
-
-  /**
-   * Re-renders the desired element.
-   * @param {Document} newHtml - The new HTML.
-   * @param {string} elementSelector - The selector of the element to re-render.
-   */
-  updateElement(newHtml, elementSelector) {
-    const element = this.closest(elementSelector);
-    const newElement = newHtml.querySelector(elementSelector);
-
-    if (!element || !newElement) {
-      throw new Error(`No new element source found for ${elementSelector}`);
-    }
-
-    morph(element, newElement);
-  }
-
-  /**
-   * Re-renders the entire main content.
-   * @param {Document} newHtml - The new HTML.
-   */
-  updateMain(newHtml) {
-    const main = document.querySelector('main');
-    const newMain = newHtml.querySelector('main');
-
-    if (!main || !newMain) {
-      throw new Error('No new main source found');
-    }
-
-    morph(main, newMain);
-  }
-
-  /**
-   * Gets the selected option.
-   * @returns {HTMLInputElement | HTMLOptionElement | undefined} The selected option.
-   */
-  get selectedOption() {
-    const selectedOption = this.querySelector('select option[selected], fieldset input:checked');
-
-    if (!(selectedOption instanceof HTMLInputElement || selectedOption instanceof HTMLOptionElement)) {
-      return undefined;
-    }
-
-    return selectedOption;
-  }
-
-  /**
-   * Gets all the selected options.
-   * @returns {{name: string, value: string}[]} All the currently selected options.
-   */
-  getAllSelectedOptions() {
-    /** @type {{name: string, value: string}[]} */
-    const options = [];
-
-    // For <select> elements, use .selectedOptions to get the current selection
-    // (the [selected] HTML attribute only reflects the initial state, not user changes)
-    for (const select of this.querySelectorAll('select')) {
-      const selected = select.selectedOptions[0];
-      if (selected?.dataset?.optionName) {
-        options.push({ name: selected.dataset.optionName, value: selected.value });
-      }
-    }
-
-    // For radio/checkbox fieldsets, :checked reflects the current state
-    /** @type {NodeListOf<HTMLInputElement>} */
-    const checkedInputs = this.querySelectorAll('fieldset input:checked');
-    for (const input of checkedInputs) {
-      if (input.dataset?.optionName) {
-        options.push({ name: input.dataset.optionName, value: input.value });
-      }
-    }
-
-    return options;
-  }
-
-  /**
-   * Gets the selected option ID.
-   * @returns {string | undefined} The selected option ID.
-   */
-  get selectedOptionId() {
-    const { selectedOption } = this;
-    if (!selectedOption) return undefined;
-    const { optionValueId } = selectedOption.dataset;
-
-    if (!optionValueId) {
-      throw new Error('No option value ID found');
-    }
-
-    return optionValueId;
-  }
-
-  /**
-   * Gets the selected options values.
-   * @returns {string[]} The selected options values.
-   */
-  get selectedOptionsValues() {
-    /** @type HTMLElement[] */
-    const selectedOptions = Array.from(this.querySelectorAll('select option[selected], fieldset input:checked'));
-
-    return selectedOptions.map((option) => {
-      const { optionValueId } = option.dataset;
-
-      if (!optionValueId) throw new Error('No option value ID found');
-
-      return optionValueId;
-    });
-  }
-}
 
 if (!customElements.get('variant-picker')) {
+  class VariantPicker extends HTMLElement {
+    constructor() {
+      super();
+      this.section = this.closest('.js-product');
+      this.productForm = this.section.querySelector('.js-product-form');
+      this.optionSelectors = this.querySelectorAll('.option-selector:not(.option-selector--custom)');
+      this.nativeSelector = document.getElementById(`variants-${this.section.dataset.section}`);
+      this.data = this.getVariantData();
+      this.selectedOptions = this.getSelectedOptions();
+      this.variant = this.getSelectedVariant();
+
+      this.updateAvailability();
+      this.updateAddToCartButton();
+      this.addEventListener('change', this.handleVariantChange.bind(this));
+      this.applySearchParams();
+
+      this.setAttribute('loaded', '');
+    }
+
+    /**
+     * Handles 'change' events on the variant picker element.
+     * @param {object} evt - Event object.
+     */
+    handleVariantChange(evt) {
+      this.selectedOptions = this.getSelectedOptions();
+      this.variant = this.getSelectedVariant();
+
+      this.preSelection = !this.variant && this.selectedOptions.find((o) => o === null) === null;
+
+      this.updateUrl(evt);
+      this.updateVariantInput();
+      this.updateAddToCartButton();
+      this.updateAvailability();
+      this.updatePrice();
+      this.updateBackorderText();
+      this.updatePickupAvailability();
+      this.updateSku();
+      this.updateBarcode();
+      VariantPicker.updateLabelText(evt);
+
+      this.dispatchEvent(new CustomEvent('on:variant:change', {
+        bubbles: true,
+        detail: {
+          form: this.productForm,
+          variant: this.variant,
+          allVariants: this.data.variants,
+          selectedOptions: this.selectedOptions
+        }
+      }));
+    }
+
+    /**
+     * Updates the "Add to Cart" button label and status.
+     */
+    updateAddToCartButton() {
+      if (!this.productForm) return;
+      if (this.selectedOptions.indexOf(null) > -1) return;
+
+      this.addBtn = this.addBtn || this.productForm.querySelector('[name="add"]');
+      const variantAvailable = this.variant && this.variant.available;
+      const unavailableStr = this.variant ? theme.strings.noStock : theme.strings.noVariant;
+
+      this.addBtn.disabled = !variantAvailable;
+      this.addBtn.textContent = variantAvailable
+        ? this.addBtn.dataset.addToCartText
+        : unavailableStr;
+    }
+
+    /**
+     * Updates the availability status of an option.
+     * @param {Element} optionEl - Option element.
+     * @param {boolean} exists - Does this option lead to a variant that exists?
+     * @param {boolean} available - Does this option lead to a variant that is available to buy?
+     */
+    static updateOptionAvailability(optionEl, exists, available) {
+      const el = optionEl;
+      const unavailableText = exists ? theme.strings.noStock : theme.strings.noVariant;
+      el.classList.toggle('is-unavailable', !available);
+      el.classList.toggle('is-nonexistent', !exists);
+
+      if (optionEl.classList.contains('custom-select__option')) {
+        const em = el.querySelector('em');
+
+        if (em) {
+          em.hidden = available;
+        }
+
+        if (!available) {
+          if (em) {
+            em.textContent = unavailableText;
+          } else {
+            el.innerHTML = `${el.innerHTML} <em class="pointer-events-none">${unavailableText}</em>`;
+          }
+        }
+      } else if (!available) {
+        el.nextElementSibling.title = unavailableText;
+      } else {
+        el.nextElementSibling.removeAttribute('title');
+      }
+    }
+
+    /**
+     * Updates the availability status in option selectors.
+     */
+    updateAvailability() {
+      if (this.dataset.availability === 'off') return;
+      const { availabilityMode } = this.dataset; // 'down' or 'selection'
+      let currVariant = this.variant;
+
+      if (!this.variant) {
+        currVariant = { options: this.selectedOptions };
+      }
+
+      if (availabilityMode === 'selection') {
+        // Flag all options as unavailable
+        this.querySelectorAll('.js-option').forEach((optionEl) => {
+          VariantPicker.updateOptionAvailability(optionEl, false, false);
+        });
+
+        // Flag selector options as available or sold out, depending on the variant availability
+        this.optionSelectors.forEach((selector, selectorIndex) => {
+          this.data.variants.forEach((variant) => {
+            let matchCount = 0;
+
+            variant.options.forEach((option, optionIndex) => {
+              if (option === currVariant.options[optionIndex] && optionIndex !== selectorIndex) {
+                matchCount += 1;
+              }
+            });
+
+            if (matchCount === currVariant.options.length - 1) {
+              const options = selector.querySelectorAll('.js-option');
+              const optionEl = Array.from(options).find((opt) => {
+                if (selector.dataset.selectorType === 'dropdown') {
+                  return opt.dataset.value === variant.options[selectorIndex];
+                }
+                return opt.value === variant.options[selectorIndex];
+              });
+
+              if (optionEl) {
+                VariantPicker.updateOptionAvailability(optionEl, true, variant.available);
+              }
+            }
+          });
+        });
+      } else {
+        this.optionSelectors.forEach((selector, selectorIndex) => {
+          const options = selector.querySelectorAll('.js-option:not([data-value=""])');
+          options.forEach((option) => {
+            const optionValue = selector.dataset.selectorType === 'dropdown' ? option.dataset.value : option.value;
+            // any available variants with previous options and this one locked in?
+            let variantsExist = false;
+            let variantsAvailable = false;
+            this.data.variants.forEach((v) => {
+              let matches = 0;
+              for (let i = 0; i < selectorIndex; i += 1) {
+                if (v.options[i] === this.selectedOptions[i] || this.selectedOptions[i] === null) {
+                  matches += 1;
+                }
+              }
+              if (v.options[selectorIndex] === optionValue && matches === selectorIndex) {
+                variantsExist = true;
+                if (v.available) {
+                  variantsAvailable = true;
+                }
+              }
+            });
+            VariantPicker.updateOptionAvailability(option, variantsExist, variantsAvailable);
+          });
+        });
+      }
+    }
+
+    /**
+     * Updates the backorder text and visibility.
+     */
+    updateBackorderText() {
+      this.backorder = this.backorder || this.section.querySelector('.backorder');
+      if (!this.backorder) return;
+
+      let hideBackorder = true;
+
+      if (this.variant && this.variant.available) {
+        const { inventory } = this.data.formatted[this.variant.id];
+
+        if (this.variant.inventory_management && inventory === 'none') {
+          const backorderProdEl = this.backorder.querySelector('.backorder__product');
+          const prodTitleEl = this.section.querySelector('.product-title');
+          const variantTitle = this.variant.title.includes('Default') ? '' : ` - ${this.variant.title}`;
+
+          backorderProdEl.textContent = `${prodTitleEl.textContent}${variantTitle}`;
+          hideBackorder = false;
+        }
+      }
+
+      this.backorder.hidden = hideBackorder;
+    }
+
+    /**
+     * Updates the colour option label text.
+     * @param {object} evt - Event object
+     */
+    static updateLabelText(evt) {
+      const selector = evt.target.closest('.option-selector');
+      if (selector.dataset.selectorType === 'dropdown') return;
+
+      const colorText = selector.querySelector('.js-color-text');
+      if (!colorText) return;
+
+      colorText.textContent = evt.target.nextElementSibling.querySelector('.js-value').textContent;
+    }
+
+    /**
+     * Updates the pick up availability.
+     */
+    updatePickupAvailability() {
+      this.pickUpAvailability = this.pickUpAvailability || this.section.querySelector('pickup-availability');
+      if (!this.pickUpAvailability) return;
+
+      if (this.variant && this.variant.available) {
+        this.pickUpAvailability.getAvailability(this.variant.id);
+      } else {
+        this.pickUpAvailability.removeAttribute('available');
+        this.pickUpAvailability.innerHTML = '';
+      }
+    }
+
+    /**
+     * Updates the price.
+     */
+    updatePrice() {
+      this.price = this.price || this.section.querySelector('.product-price .price');
+      if (!this.price) return;
+
+      let { variant } = this;
+      if (this.preSelection) {
+        variant = this.data.variants[0];
+        for (let i = 1; i < this.data.variants.length; i += 1) {
+          if (this.data.variants[i].price < variant.price) variant = this.data.variants[i];
+        }
+      }
+
+      if (variant) {
+        const priceCurrentEl = this.price.querySelector('.price__current');
+        const priceWasEl = this.price.querySelector('.price__was');
+        const unitPriceEl = this.price.querySelector('.unit-price');
+
+        // Update current price and original price if on sale.
+        priceCurrentEl.innerHTML = this.data.formatted[variant.id].price;
+        if (priceWasEl) priceWasEl.innerHTML = this.data.formatted[variant.id].compareAtPrice || '';
+
+        // Update unit price, if specified.
+        if (variant.unit_price_measurement) {
+          const valueEl = this.price.querySelector('.unit-price__price');
+          const unitEl = this.price.querySelector('.unit-price__unit');
+          const value = variant.unit_price_measurement.reference_value;
+          const unit = variant.unit_price_measurement.reference_unit;
+
+          valueEl.innerHTML = this.data.formatted[variant.id].unitPrice;
+          unitEl.textContent = value === 1 ? unit : `${value} ${unit}`;
+          unitPriceEl.hidden = false;
+        } else if (unitPriceEl) {
+          unitPriceEl.hidden = true;
+        }
+
+        this.price.classList.toggle('price--on-sale', variant.compare_at_price > variant.price);
+        this.price.classList.toggle('price--sold-out', !variant.available && !this.preSelection);
+      }
+
+      this.price.querySelector('.price__default').hidden = !this.variant && !this.preSelection;
+      this.price.querySelector('.price__no-variant').hidden = this.variant || this.preSelection;
+      const from = this.price.querySelector('.price__from');
+      if (from) {
+        from.hidden = !this.preSelection;
+      }
+    }
+
+    /**
+     * Updates the SKU.
+     */
+    updateSku() {
+      this.sku = this.sku || this.section.querySelector('.product-sku__value');
+      if (!this.sku) return;
+
+      const skuAvailable = this.variant && this.variant.sku;
+      this.sku.textContent = skuAvailable ? this.variant.sku : '';
+      this.sku.parentNode.hidden = !skuAvailable;
+    }
+
+    /**
+     * Updates the Barcode.
+     */
+    updateBarcode() {
+      this.barcode = this.barcode || this.section.querySelector('.product-barcode__value');
+      if (!this.barcode) return;
+
+      const barcodeAvailable = this.variant && this.variant.barcode;
+      this.barcode.textContent = barcodeAvailable ? this.variant.barcode : '';
+      this.barcode.parentNode.hidden = !barcodeAvailable;
+    }
+
+    /**
+     * Updates the url with the selected variant id.
+     * @param {object} evt - Event object.
+     */
+    updateUrl(evt) {
+      if (!evt || evt.type !== 'change' || this.dataset.updateUrl === 'false') return;
+      const url = this.variant ? `${this.dataset.url}?variant=${this.variant.id}` : this.dataset.url;
+      window.history.replaceState({ }, '', url);
+    }
+
+    /**
+     * Updates the value of the hidden [name="id"] form inputs.
+     */
+    updateVariantInput() {
+      this.forms = this.forms || this.section.querySelectorAll('.js-product-form, .js-instalments-form');
+
+      this.forms.forEach((form) => {
+        const input = form.querySelector('[name="id"]');
+        input.value = this.variant ? this.variant.id : '';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
+
+    /**
+     * Gets the variant data for a product.
+     * @returns {?object}
+     */
+    getVariantData() {
+      const dataEl = this.querySelector('[type="application/json"]');
+      return JSON.parse(dataEl.textContent);
+    }
+
+    /**
+     * Get the selected values from a list of variant options.
+     * @returns {Array} Array of selected option values, value is null if not selected.
+     */
+    getSelectedOptions() {
+      const selectedOptions = [];
+
+      this.optionSelectors.forEach((selector) => {
+        if (selector.dataset.selectorType === 'dropdown') {
+          const selected = selector.querySelector('.custom-select__option[aria-selected="true"]');
+          selectedOptions.push(selected && selected.dataset.value !== '' ? selected.dataset.value : null);
+        } else {
+          const selected = selector.querySelector('input:checked');
+          selectedOptions.push(selected ? selected.value : null);
+        }
+      });
+
+      return selectedOptions;
+    }
+
+    /**
+     * Get selected variant data.
+     * @returns {?object} Variant object, or null if one is not selected.
+     */
+    getSelectedVariant() {
+      return this.data.variants.find(
+        (v) => v.options.every((val, index) => val === this.selectedOptions[index])
+      );
+    }
+
+    /**
+     * Apply search parameters.
+     */
+    applySearchParams() {
+      const searchParams = new URLSearchParams(window.location.search);
+
+      Array.from(searchParams.keys()).forEach((key) => {
+        const value = searchParams.get(key);
+        const optionSelectors = Array.from(this.optionSelectors);
+        const matchingOptionSelector = optionSelectors.find((x) => x.dataset.option === key);
+        if (!matchingOptionSelector) return;
+
+        if (matchingOptionSelector.dataset.selectorType === 'dropdown') {
+          const colorOptionDropdown = matchingOptionSelector.querySelector(`.custom-select__option[data-value="${value}"]`);
+          if (colorOptionDropdown) {
+            const customSelect = colorOptionDropdown.closest('custom-select');
+            customSelect.selectOption(colorOptionDropdown);
+          }
+        } else {
+          const matchingInput = matchingOptionSelector.querySelector(`input[value="${value}"]`);
+          if (matchingInput) {
+            const matchingOptionValue = matchingOptionSelector.querySelector('.option-selector__label-value');
+            if (matchingOptionValue) {
+              matchingOptionSelector.querySelector('.option-selector__label-value').textContent = value;
+            }
+            matchingInput.checked = true;
+            matchingInput.dispatchEvent(
+              new CustomEvent('change', { bubbles: true, cancelable: false })
+            );
+          }
+        }
+      });
+    }
+  }
+
   customElements.define('variant-picker', VariantPicker);
 }

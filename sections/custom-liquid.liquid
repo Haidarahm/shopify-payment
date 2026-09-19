@@ -1,82 +1,43 @@
-
-
-{% liquid
-  if section.settings.background_color != blank
-    render 'contrast-override', background_color: section.settings.background_color, section_id: section.id
-  endif
-%}
-
-<div
-  class="section-background{% if section.settings.background_color != blank %} color-custom-{{ section.id }}{% endif %}"
-></div>
-<div
-  class="section section--{{ section.settings.section_width }} spacing-style{% if section.settings.background_color != blank %} color-custom-{{ section.id }}{% endif %}"
-  style="{% render 'spacing-padding', settings: section.settings %}"
->
-  {{ section.settings.custom_liquid }}
+<div id="section-id-{{ section.id }}" class="section-id-{{ section.id }}{% unless section.settings.full_width %} container{% endunless %}{% if section.settings.show_space %} fully-spaced-row--medium{% endif %}">
+  <div class="custom-html">
+    {{ section.settings.code }}
+  </div>
 </div>
+
 
 {% schema %}
 {
-  "name": "t:names.custom_liquid",
+  "name": "Custom Liquid",
+  "class": "section-custom-liquid",
+  "disabled_on": {
+    "groups": [
+      "aside"
+    ]
+  },
   "settings": [
     {
+      "id": "full_width",
+      "type": "checkbox",
+      "label": "Full page width",
+      "default": true
+    },
+    {
+      "id": "show_space",
+      "type": "checkbox",
+      "label": "Show space above and below section",
+      "default": true
+    },
+    {
       "type": "liquid",
-      "id": "custom_liquid",
-      "label": "t:settings.custom_liquid",
-      "info": "t:info.custom_liquid"
-    },
-    {
-      "type": "color",
-      "id": "background_color",
-      "label": "t:settings.background_color",
-      "placeholder": "t:settings.default"
-    },
-    {
-      "type": "select",
-      "id": "section_width",
-      "label": "t:settings.width",
-      "options": [
-        {
-          "value": "page-width",
-          "label": "t:options.page"
-        },
-        {
-          "value": "full-width",
-          "label": "t:options.full"
-        }
-      ],
-      "default": "page-width"
-    },
-    {
-      "type": "header",
-      "content": "t:content.padding"
-    },
-    {
-      "type": "range",
-      "id": "padding-block-start",
-      "label": "t:settings.top",
-      "min": 0,
-      "max": 100,
-      "step": 1,
-      "unit": "px",
-      "default": 0
-    },
-    {
-      "type": "range",
-      "id": "padding-block-end",
-      "label": "t:settings.bottom",
-      "min": 0,
-      "max": 100,
-      "step": 1,
-      "unit": "px",
-      "default": 0
+      "id": "code",
+      "label": "Liquid code"
     }
   ],
   "presets": [
     {
-      "name": "t:names.custom_liquid",
-      "category": "t:categories.layout"
+      "name": "Custom Liquid",
+      "settings": {
+      }
     }
   ]
 }

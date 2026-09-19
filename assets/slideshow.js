@@ -1,948 +1,331 @@
-import { Component } from '@theme/component';
-import {
-  center,
-  closest,
-  clamp,
-  mediaQueryLarge,
-  prefersReducedMotion,
-  preventDefault,
-  viewTransition,
-  scheduler,
-} from '@theme/utilities';
-import { Scroller, scrollIntoView } from '@theme/scrolling';
-import { SlideshowSelectEvent } from '@theme/events';
-
-// The threshold for determining visibility of slides.
-const SLIDE_VISIBLITY_THRESHOLD = 0.7;
-
 /**
- * Shared viewport observer manager for lazy scroll enablement.
- *
- * Limit the number of compositor layers created by slideshows by only enabling scrolling when the slideshow is in the viewport.
- * Resolves known issues with iOS Safari where too many composition layers will crash the page.
- * When a slideshow is NOT in the viewport, it has overflow: hidden (no compositor layer).
- * When a slideshow enters the viewport, the [in-viewport] attribute is added, enabling scrolling.
+ * Returns a function that as long as it continues to be invoked, won't be triggered.
+ * @param {Function} fn - Callback function.
+ * @param {number} [wait=300] - Delay (in milliseconds).
+ * @returns {Function}
  */
-class SlideshowViewportObserver {
-  /** @type {SlideshowViewportObserver | null} */
-  static #instance = null;
-
-  /** @type {IntersectionObserver | null} */
-  #observer = null;
-
-  /**
-   * Gets the singleton instance
-   * @returns {SlideshowViewportObserver}
-   */
-  static getInstance() {
-    if (!this.#instance) {
-      this.#instance = new SlideshowViewportObserver();
-    }
-    return this.#instance;
-  }
-
-  /**
-   * Registers a slideshow to be observed for viewport visibility
-   * @param {Slideshow} slideshow - The slideshow to observe
-   */
-  observe(slideshow) {
-    if (!this.#observer) {
-      this.#observer = new IntersectionObserver(
-        (entries) => {
-          for (const entry of entries) {
-            const slideshowElement = /** @type {Slideshow} */ (entry.target);
-            if (entry.isIntersecting) {
-              slideshowElement.setAttribute('in-viewport', '');
-            } else {
-              slideshowElement.removeAttribute('in-viewport');
-            }
-          }
-        },
-        {
-          rootMargin: '100px',
-        }
-      );
-    }
-
-    this.#observer.observe(slideshow);
-  }
-
-  /**
-   * Unregisters a slideshow from viewport observation
-   * @param {Slideshow} slideshow - The slideshow to unobserve
-   */
-  unobserve(slideshow) {
-    this.#observer?.unobserve(slideshow);
-    slideshow.removeAttribute('in-viewport');
-  }
+function debounce(fn, wait = 300) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, args), wait);
+  };
 }
 
-/**
- * Slideshow custom element that allows sliding between content.
- *
- * @typedef {Object} Refs
- * @property {HTMLElement} scroller
- * @property {HTMLElement} slideshowContainer
- * @property {HTMLElement[]} [slides]
- * @property {HTMLElement} [current]
- * @property {HTMLElement[]} [thumbnails]
- * @property {HTMLElement[]} [dots]
- * @property {HTMLButtonElement} [previous]
- * @property {HTMLButtonElement} [next]
- *
- * @extends {Component<Refs>}
- */
-export class Slideshow extends Component {
-  static get observedAttributes() {
-    return ['initial-slide'];
-  }
+if (!customElements.get('slide-show')) {
+  class SlideShow extends HTMLElement {
+    constructor() {
+      super();
+      window.initLazyScript(this, this.init.bind(this));
+    }
 
-  /**
-   * @param {string} name
-   * @param {string} oldValue
-   * @param {string} newValue
-   */
-  attributeChangedCallback(name, oldValue, newValue) {
-    // Collection page filtering will Morph slideshow galleries in place, updating
-    // the slideshow[initial-slide] and slideshow-slide[hidden] attributes.
-    // We need to re-select() the slide after the morph is complete, but not before
-    // slideshow-slide elements have their [hidden] attribute updated.
-    if (name === 'initial-slide' && oldValue !== newValue) {
-      queueMicrotask(() => {
-        // Only select if the component is connected and initialized
-        if (!this.isConnected || !this.#scroll || !this.refs.slides) return;
-        const index = parseInt(newValue, 10) || 0;
-        const slide_id = this.refs.slides[index]?.getAttribute('slide-id');
-        if (slide_id) {
-          this.select({ id: slide_id }, undefined, { animate: false });
+    init() {
+      this.slideshow = this.querySelector('.slideshow');
+      this.slides = this.querySelectorAll('.slideshow__slide');
+      this.nav = this.querySelector('.slideshow-nav');
+      this.pagination = this.querySelector('.slideshow-pagination');
+      this.rtl = document.dir === 'rtl';
+      this.currentIndex = 0;
+      this.swipeThreshold = 80;
+      this.wheelTriggerWait = 800;
+      this.transitionOutDelay = this.dataset.transitionOutDelay || 0;
+
+      if (this.nav) {
+        this.counterCurrent = this.querySelector('.slideshow-nav__counter-current');
+        this.nav.addEventListener('click', this.handleNavClick.bind(this));
+      }
+
+      if (this.pagination) {
+        this.pageBtns = this.querySelectorAll('.page-btn');
+        this.pagination.addEventListener('click', this.handlePaginationClick.bind(this));
+      }
+
+      if (theme.device.hasTouch) {
+        this.slideshow.addEventListener('touchstart', this.handleTouchStart.bind(this), { passive: true });
+        this.slideshow.addEventListener('touchmove', debounce(this.handleTouchMove.bind(this), 200), { passive: true });
+      }
+
+      this.slideshow.addEventListener('wheel', this.handleWheel.bind(this));
+
+      this.slideshow.addEventListener('transitionend', SlideShow.handleTransitionend);
+
+      this.setSlideVisibility();
+      if (this.dataset.autoplay === 'true') this.initAutoPlay();
+    }
+
+    initAutoPlay() {
+      this.autoplayEnabled = true;
+      this.autoplaySpeed = this.dataset.speed * 1000;
+      this.pauseAutoplayOnMouseover = this.dataset.pauseAutoplayOnMouseover !== 'false';
+
+      if (this.pauseAutoplayOnMouseover) {
+        this.addEventListener('mouseover', this.pauseAutoplay.bind(this));
+        this.addEventListener('mouseleave', this.resumeAutoplay.bind(this));
+      }
+
+      this.slideshow.addEventListener('focusin', this.pauseAutoplay.bind(this));
+      this.slideshow.addEventListener('focusout', this.resumeAutoplay.bind(this));
+
+      this.addObserver();
+      this.startAutoplay();
+    }
+
+    /**
+     * Handles 'click' events on the nav buttons container.
+     * @param {object} evt - Event object.
+     */
+    handleNavClick(evt) {
+      if (evt.target.matches('.autoplay-btn')) {
+        this.togglePlayState(evt);
+        return;
+      }
+
+      if (evt.target.name === 'next') {
+        this.showNextSlide();
+      } else if (evt.target.name === 'prev') {
+        this.showPrevSlide();
+      }
+    }
+
+    /**
+     * Handles 'click' events on the pagination.
+     * @param {object} evt - Event object.
+     */
+    handlePaginationClick(evt) {
+      if (!evt.target.matches('.page-btn')) return;
+      this.autoplayTimeLeft = this.autoplaySpeed;
+      this.setActiveSlide(Number(evt.target.dataset.index));
+    }
+
+    /**
+     * Handles 'wheel' events on the slideshow.
+     * @param {object} evt - Event object.
+     */
+    handleWheel(evt) {
+      if (this.blockWheelTrigger) {
+        evt.preventDefault();
+      } else if (evt.deltaX > 20) {
+        evt.preventDefault();
+        this.showNextSlide();
+        this.blockWheelTrigger = true;
+        setTimeout(() => { this.blockWheelTrigger = false; }, this.wheelTriggerWait);
+      } else if (evt.deltaX < -20) {
+        evt.preventDefault();
+        this.showPrevSlide();
+        this.blockWheelTrigger = true;
+        setTimeout(() => { this.blockWheelTrigger = false; }, this.wheelTriggerWait);
+      }
+    }
+
+    /**
+     * Handles 'touchstart' events on the slideshow.
+     * @param {object} evt - Event object.
+     */
+    handleTouchStart(evt) {
+      this.touchStart = evt.changedTouches[0].screenX;
+    }
+
+    /**
+     * Handles 'touchmove' events on the slideshow.
+     * @param {object} evt - Event object.
+     */
+    handleTouchMove(evt) {
+      const touchEnd = evt.changedTouches[0].screenX;
+
+      if (touchEnd < this.touchStart - this.swipeThreshold) {
+        this.rtl ? this.showPrevSlide() : this.showNextSlide();
+      }
+
+      if (touchEnd > this.touchStart + this.swipeThreshold) {
+        this.rtl ? this.showNextSlide() : this.showPrevSlide();
+      }
+    }
+
+    /**
+     * Handles 'transitionend' events on the slideshow.
+     * @param {object} evt - Event object.
+     */
+    static handleTransitionend(evt) {
+      if (!evt.target.matches('.slideshow__motion-media')) return;
+      evt.target.classList.remove('transition-out');
+    }
+
+    showNextSlide() {
+      let index = this.currentIndex + 1;
+      if (index === this.slides.length) index = 0;
+      this.setActiveSlide(index, 'next');
+    }
+
+    showPrevSlide() {
+      let index = this.currentIndex - 1;
+      if (index < 0) index = this.slides.length - 1;
+      this.setActiveSlide(index, 'prev');
+    }
+
+    /**
+     * Sets the active slide.
+     * @param {number} slideIndex - Index of the slide to show.
+     * @param {string} slideDirection - Direction for slide transitions.
+     */
+    setActiveSlide(slideIndex, slideDirection) {
+      if (slideIndex === this.currentIndex) return;
+      // Reset any prior transitions.
+      this.querySelectorAll('.transition-out').forEach((el) => el.classList.remove('transition-out'));
+
+      // Set data attribute for direction of slide transitions.
+      let dir = slideDirection || (slideIndex < this.currentIndex ? 'prev' : 'next');
+      if (this.rtl) dir = dir === 'next' ? 'prev' : 'next';
+      this.dataset.direction = dir;
+
+      // Trigger text overlay transition out.
+      this.slides[this.currentIndex].classList.add('transition-out');
+
+      setTimeout(() => {
+        // Move new slide into the viewport.
+        this.slideshow.scrollTo({ left: this.slides[slideIndex].offsetLeft, behavior: 'instant' });
+
+        // Update current slide and trigger transitions.
+        this.slides[slideIndex].classList.add('is-active');
+        this.slides[this.currentIndex].classList.remove('is-active', 'transition-out');
+
+        // Add class to transitioned content element (if it exists).
+        const transitionedEl = this.slides[this.currentIndex].querySelector('.slideshow__motion-media');
+        if (transitionedEl) transitionedEl.classList.add('transition-out');
+
+        // Reset autoplay.
+        if (this.autoplayEnabled) {
+          if (this.autoplayPaused) {
+            this.autoplayStartTime = Date.now();
+          } else {
+            clearTimeout(this.autoplayTimer);
+            this.startAutoplay();
+          }
+        }
+
+        // Update slide counter.
+        if (this.counterCurrent) this.counterCurrent.textContent = slideIndex + 1;
+
+        this.currentIndex = slideIndex;
+        this.setSlideVisibility();
+        this.updatePagination();
+      }, this.transitionOutDelay);
+    }
+
+    /**
+     * Updates the 'aria-current' attribute of the pagination buttons.
+     */
+    updatePagination() {
+      if (!this.pagination) return;
+
+      this.pageBtns.forEach((el, index) => {
+        if (index === this.currentIndex) {
+          el.setAttribute('aria-current', 'true');
+        } else {
+          el.removeAttribute('aria-current');
         }
       });
     }
-  }
 
-  requiredRefs = ['scroller'];
-
-  async connectedCallback() {
-    super.connectedCallback();
-
-    // Register with shared viewport observer for lazy scroll enablement.
-    // This prevents iOS Safari crashes caused by too many compositor layers.
-    SlideshowViewportObserver.getInstance().observe(this);
-
-    // Wait for any in-progress view transitions to finish
-    if (viewTransition.current) {
-      await viewTransition.current;
-      // It's possible that the slideshow was disconnected before the view transition finished
-      if (!this.isConnected) return;
+    stopAutoplay() {
+      this.setSlideshowState('paused');
+      clearTimeout(this.autoplayTimer);
     }
 
-    const slideCount = this.slides?.length || 0;
-    slideCount <= 1 ? this.#setupSlideshowWithoutControls() : this.#setupSlideshow();
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-
-    // Unregister from shared viewport observer
-    SlideshowViewportObserver.getInstance().unobserve(this);
-
-    if (this.#scroll) {
-      const { scroller } = this.refs;
-      scroller.removeEventListener('mousedown', this.#handleMouseDown);
-      this.#scroll.destroy();
+    startAutoplay() {
+      this.autoplayTimeLeft = null;
+      this.autoplayStartTime = Date.now();
+      this.autoplayTimer = setTimeout(this.showNextSlide.bind(this), this.autoplaySpeed);
+      this.setSlideshowState('running');
     }
 
-    const slideCount = this.slides?.length || 0;
-    if (slideCount > 1) {
-      this.removeEventListener('mouseenter', this.suspend);
-      this.removeEventListener('mouseleave', this.resume);
-      this.removeEventListener('pointerenter', this.#handlePointerEnter);
-      document.removeEventListener('visibilitychange', this.#handleVisibilityChange);
-    }
+    pauseAutoplay() {
+      if (!this.autoplayEnabled || this.autoplayPaused) return;
+      this.stopAutoplay();
 
-    if (this.#resizeObserver) {
-      this.#resizeObserver.disconnect();
-    }
-
-    if (this.#intersectionObserver) {
-      this.#intersectionObserver.disconnect();
-      this.#intersectionObserver = null;
-    }
-  }
-
-  /** Indicates whether the slideshow is nested inside another slideshow. */
-  get isNested() {
-    return this.parentElement?.closest('slideshow-component') !== null;
-  }
-
-  get initialSlide() {
-    return this.refs.slides?.[this.initialSlideIndex];
-  }
-
-  /**
-   * Selects a slide based on the input index.
-   * @param {number|string|{id: string}} input - The index or id of the slide to select.
-   * @param {Event} [event] - The event that triggered the selection.
-   * @param {Object} [options] - The options for the selection.
-   * @param {boolean} [options.animate=true] - Whether to animate the selection.
-   */
-  async select(input, event, options = {}) {
-    if (this.#disabled || !this.refs.slides?.length) return;
-    if (!this.#scroll) return;
-
-    // Store the actual current slide before any mutations
-    const currentSlide = this.slides?.[this.current];
-
-    for (const slide of this.refs.slides) {
-      if (slide.hasAttribute('reveal')) {
-        slide.removeAttribute('reveal');
-        slide.setAttribute('aria-hidden', 'true');
-      }
-    }
-
-    // Figure out the raw desired index (could be -1 if user is on first slide and clicks prev)
-    let requestedIndex = (() => {
-      if (typeof input === 'number') return input;
-      if (typeof input === 'string') return parseInt(input, 10);
-      if ('id' in input) {
-        const requestedSlide = this.refs.slides.find((slide) => slide.getAttribute('slide-id') == input.id);
-
-        if (!requestedSlide || !this.slides) return;
-
-        // Force the slide to be revealed if it is hidden
-        if (requestedSlide.hasAttribute('hidden')) {
-          requestedSlide.setAttribute('reveal', '');
-          requestedSlide.setAttribute('aria-hidden', 'false');
-        }
-
-        return this.slides.indexOf(requestedSlide);
-      }
-    })();
-
-    const { current } = this;
-    const { slides } = this;
-
-    // Guard checks: no slides, invalid index, or selecting the same slide
-    if (!slides?.length || requestedIndex === undefined || isNaN(requestedIndex)) return;
-
-    const requestedSlideElement = slides?.[requestedIndex];
-    if (currentSlide === requestedSlideElement) return;
-
-    if (!this.infinite) requestedIndex = clamp(requestedIndex, 0, slides.length - 1);
-
-    event?.preventDefault();
-
-    const { animate = true } = options;
-    const lastIndex = slides.length - 1;
-
-    // Decide the actual target index (clamp for infinite loop)
-    let index = requestedIndex;
-    if (requestedIndex < 0) index = lastIndex;
-    else if (requestedIndex > lastIndex) index = 0;
-
-    const isAdjacentSlide = Math.abs(index - current) <= 1 && requestedIndex >= 0 && requestedIndex <= lastIndex;
-    const { visibleSlides } = this;
-    const instant = prefersReducedMotion() || !animate;
-
-    // If jump is more than 1 or we looped, do the placeholder + reorder trick
-    if (!instant && !isAdjacentSlide && visibleSlides.length === 1) {
-      this.#disabled = true;
-      await this.#scroll.finished; // ensure we're not mid-scroll
-
-      const targetSlide = slides[index];
-      if (!targetSlide || !currentSlide) return;
-
-      // Create a placeholder in the original DOM position of targetSlide
-      const placeholder = document.createElement('slideshow-slide');
-      targetSlide.before(placeholder);
-
-      // Decide whether targetSlide goes before or after currentSlide
-      // so that we scroll a short distance in the correct direction
-      if (requestedIndex < current) {
-        currentSlide.before(targetSlide);
+      if (this.autoplayTimeLeft) {
+        this.autoplayTimeLeft -= (Date.now() - this.resumedTime);
       } else {
-        currentSlide.after(targetSlide);
+        this.autoplayTimeLeft = this.autoplaySpeed - (Date.now() - this.autoplayStartTime);
       }
+    }
 
-      if (current === 0) this.#scroll.to(currentSlide, { instant: true });
+    resumeAutoplay() {
+      if (!this.autoplayEnabled || !this.autoplayPaused) return;
 
-      // Once that scroll finishes, restore the DOM
-      queueMicrotask(async () => {
-        await this.#scroll.finished;
-        this.#disabled = false;
+      this.resumedTime = Date.now();
+      this.autoplayTimer = setTimeout(() => {
+        this.showNextSlide();
+        this.startAutoplay();
+      }, this.autoplayTimeLeft);
 
-        // Restore the slide back to its original position. This triggers a scroll event.
-        placeholder.replaceWith(targetSlide);
+      this.setSlideshowState('running');
+    }
 
-        // Instantly scroll to the target slide as its position will have changed
-        this.#scroll.to(targetSlide, { instant: true });
+    /**
+     * Adds an observer to pause autoplay when the slideshow is not in the viewport.
+     */
+    addObserver() {
+      if ('IntersectionObserver' in window === false) return;
 
-        // Force Safari to recalculate the timeline state on timeline refresh (after loop)
-        requestAnimationFrame(() => {
-          this.setAttribute('refreshing-timeline', '');
-          requestAnimationFrame(() => {
-            this.removeAttribute('refreshing-timeline');
-          });
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            this.resumeAutoplay();
+          } else {
+            this.pauseAutoplay();
+          }
         });
       });
+
+      observer.observe(this);
     }
 
-    const slide = slides[index];
-    if (!slide) return;
+    /**
+     * Sets 'aria-hidden' and 'tabindex' of the slides and text overlay buttons.
+     */
+    setSlideVisibility() {
+      this.slides.forEach((el, index) => {
+        const btns = el.querySelectorAll('a');
 
-    const previousIndex = this.current;
+        if (index === this.currentIndex) {
+          el.setAttribute('aria-hidden', 'false');
+          el.removeAttribute('tabindex');
 
-    slide.setAttribute('aria-hidden', 'false');
-
-    if (this.#scroll) {
-      this.#scroll.to(slide, { instant });
-    }
-
-    this.current = this.slides?.indexOf(slide) || 0;
-
-    this.#centerSelectedThumbnail(index, instant ? 'instant' : 'smooth');
-
-    this.dispatchEvent(
-      new SlideshowSelectEvent({
-        index,
-        previousIndex,
-        userInitiated: event != null,
-        trigger: 'select',
-        slide,
-        id: slide.getAttribute('slide-id'),
-      })
-    );
-  }
-
-  /**
-   * Advances to the next slide.
-   * @param {Event} [event] - The event that triggered the next slide.
-   * @param {Object} [options] - The options for the next slide.
-   * @param {boolean} [options.animate=true] - Whether to animate the next slide.
-   */
-  next(event, options) {
-    event?.preventDefault();
-    this.select(this.nextIndex, event, options);
-  }
-
-  /**
-   * Goes back to the previous slide.
-   * @param {Event} [event] - The event that triggered the previous slide.
-   * @param {Object} [options] - The options for the previous slide.
-   * @param {boolean} [options.animate=true] - Whether to animate the previous slide.
-   */
-  previous(event, options) {
-    event?.preventDefault();
-    this.select(this.previousIndex, event, options);
-  }
-
-  /**
-   * Starts automatic slide playback.
-   * @param {number} [interval] - The time interval in seconds between slides.
-   */
-  play(interval = this.autoplayInterval) {
-    if (this.#interval) return;
-
-    this.paused = false;
-
-    this.#interval = setInterval(() => {
-      if (this.matches(':hover') || document.hidden) return;
-
-      this.next();
-    }, interval);
-  }
-
-  /**
-   * Pauses automatic slide playback.
-   */
-  pause() {
-    this.paused = true;
-    this.suspend();
-  }
-
-  get paused() {
-    return this.hasAttribute('paused');
-  }
-
-  set paused(value) {
-    if (value) {
-      this.setAttribute('paused', '');
-    } else {
-      this.removeAttribute('paused');
-    }
-  }
-
-  /**
-   * Suspends automatic slide playback.
-   */
-  suspend() {
-    clearInterval(this.#interval);
-    this.#interval = undefined;
-  }
-
-  /**
-   * Resumes automatic slide playback if autoplay is enabled.
-   */
-  resume() {
-    if (!this.autoplay || this.paused) return;
-
-    this.pause();
-    this.play();
-  }
-
-  get autoplay() {
-    return Boolean(this.autoplayInterval);
-  }
-
-  get autoplayInterval() {
-    const interval = this.getAttribute('autoplay');
-    const value = parseInt(`${interval}`, 10);
-
-    if (Number.isNaN(value)) return undefined;
-
-    return value * 1000;
-  }
-
-  /**
-   * The current slide index.
-   * @type {number}
-   */
-  #current = 0;
-
-  get current() {
-    return this.#current;
-  }
-
-  /**
-   * Sets the current slide index and update the DOM
-   * @type {number}
-   */
-  set current(value) {
-    const { current, thumbnails, dots, slides, previous, next } = this.refs;
-
-    this.#current = value;
-
-    if (current) current.textContent = `${value + 1}`;
-
-    for (const controls of [thumbnails, dots]) {
-      controls?.forEach((el, i) => el.setAttribute('aria-selected', `${i === value}`));
-    }
-
-    if (previous) previous.disabled = Boolean(!this.infinite && value === 0);
-    if (next) next.disabled = Boolean(!this.infinite && slides && this.nextIndex >= slides.length);
-  }
-
-  get infinite() {
-    return this.getAttribute('infinite') != null;
-  }
-
-  get visibleSlides() {
-    return this.#visibleSlides;
-  }
-
-  get previousIndex() {
-    const { current, visibleSlides } = this;
-    const modifier = visibleSlides.length > 1 ? visibleSlides.length : 1;
-
-    return current - modifier;
-  }
-
-  get nextIndex() {
-    const { current, visibleSlides } = this;
-    const modifier = visibleSlides.length > 1 ? visibleSlides.length : 1;
-
-    return current + modifier;
-  }
-
-  get atStart() {
-    const { current, slides } = this;
-
-    return slides?.length ? current === 0 : false;
-  }
-
-  get atEnd() {
-    const { current, slides } = this;
-
-    return slides?.length ? current === slides.length - 1 : false;
-  }
-
-  /**
-   * Sets the disabled attribute.
-   * @param {boolean} value - The value to set the disabled attribute to.
-   */
-  set disabled(value) {
-    this.setAttribute('disabled', String(value));
-  }
-  /**
-   * Whether the slideshow is disabled.
-   * @type {boolean}
-   */
-  get disabled() {
-    return (
-      this.getAttribute('disabled') === 'true' || (this.hasAttribute('mobile-disabled') && !mediaQueryLarge.matches)
-    );
-  }
-
-  /**
-   * Indicates whether the slideshow is temporarily disabled (e.g., during infinite loop transition).
-   * @type {boolean}
-   */
-  #disabled = false;
-
-  /**
-   * The interval ID for automatic playback.
-   * @type {number|undefined}
-   */
-  #interval = undefined;
-
-  /**
-   * The Scroller instance that manages scrolling.
-   * @type {Scroller}
-   */
-  #scroll;
-
-  /**
-   * The ResizeObserver instance for monitoring scroller size changes
-   * @type {ResizeObserver}
-   */
-  #resizeObserver;
-
-  /**
-   * IntersectionObserver for efficient visibility tracking of slides
-   * @type {IntersectionObserver | null}
-   */
-  #intersectionObserver = null;
-
-  /**
-   * Cached visible slides result from IntersectionObserver
-   * @type {HTMLElement[]}
-   */
-  #visibleSlides = [];
-
-  /**
-   * Setup the slideshow without controls for zero or one slides
-   */
-  #setupSlideshowWithoutControls() {
-    this.current = 0;
-    if (this.hasAttribute('auto-hide-controls')) {
-      const { slideshowControls } = this.refs;
-      if (slideshowControls instanceof HTMLElement) {
-        slideshowControls.hidden = true;
-      }
-    }
-
-    if (this.refs.slides?.[0]) {
-      this.refs.slides[0].setAttribute('aria-hidden', 'false');
-    }
-  }
-
-  /**
-   * Setup the slideshow with controls for when there are multiple slides
-   */
-  #setupSlideshow() {
-    // Setup IntersectionObserver first for efficient visibility tracking
-    this.#setupIntersectionObserver();
-
-    // Setup the scroll instance
-    const { scroller } = this.refs;
-    this.#scroll = new Scroller(scroller, {
-      onScroll: this.#handleScroll,
-      onScrollStart: this.#onTransitionInit,
-      onScrollEnd: this.#onTransitionEnd,
-    });
-
-    scroller.addEventListener('mousedown', this.#handleMouseDown);
-
-    this.addEventListener('mouseenter', this.suspend);
-    this.addEventListener('mouseleave', this.resume);
-    this.addEventListener('pointerenter', this.#handlePointerEnter);
-    document.addEventListener('visibilitychange', this.#handleVisibilityChange);
-
-    this.#updateControlsVisibility();
-
-    this.disabled = this.isNested || this.disabled;
-
-    this.resume();
-
-    this.current = this.initialSlideIndex;
-
-    // Batch reads and writes to the DOM
-    scheduler.schedule(() => {
-      let visibleSlidesAmount = 0;
-      const initialSlideId = this.initialSlide?.getAttribute('slide-id');
-
-      // Wait for next frame to ensure layout is fully calculated before setting initial scroll position
-      // This prevents race conditions on Safari mobile when section_width is 'full-width'
-      requestAnimationFrame(() => {
-        if (this.initialSlideIndex !== 0 && initialSlideId) {
-          this.select({ id: initialSlideId }, undefined, { animate: false });
-          visibleSlidesAmount = 1;
+          btns.forEach((btn) => {
+            btn.removeAttribute('tabindex');
+          });
         } else {
-          visibleSlidesAmount = this.#updateVisibleSlides();
-          if (visibleSlidesAmount === 0) {
-            this.select(0, undefined, { animate: false });
-            visibleSlidesAmount = 1;
-          }
+          el.setAttribute('aria-hidden', 'true');
+          el.setAttribute('tabindex', '-1');
+
+          btns.forEach((btn) => {
+            btn.setAttribute('tabindex', '-1');
+          });
         }
       });
-
-      this.#resizeObserver = new ResizeObserver(async () => {
-        if (viewTransition.current) await viewTransition.current;
-
-        if (visibleSlidesAmount > 1) {
-          this.#updateVisibleSlides();
-        }
-
-        if (this.hasAttribute('auto-hide-controls')) {
-          this.#updateControlsVisibility();
-        }
-      });
-
-      this.#resizeObserver.observe(this.refs.slideshowContainer);
-    });
-  }
-
-  /**
-   * Callback invoked on user initiated scroll to sync the current slide index
-   * and emit a slide change event if the index has changed.
-   */
-  #handleScroll = () => {
-    const previousIndex = this.#current;
-    const index = this.#sync();
-
-    if (index === previousIndex) return;
-
-    const slide = this.slides?.[index];
-    if (!slide) return;
-
-    this.dispatchEvent(
-      new SlideshowSelectEvent({
-        index,
-        previousIndex,
-        userInitiated: true,
-        trigger: 'scroll',
-        slide,
-        id: slide.getAttribute('slide-id'),
-      })
-    );
-  };
-
-  #onTransitionInit = () => {
-    this.setAttribute('transitioning', '');
-  };
-
-  #onTransitionEnd = () => {
-    this.#updateVisibleSlides();
-    this.removeAttribute('transitioning');
-  };
-
-  /**
-   * Synchronizes the scroll position and updates the current slide index.
-   * @returns {number} The index of the current slide.
-   */
-  #sync = () => {
-    const { slides } = this;
-    if (!slides) return (this.current = 0);
-
-    if (!this.#scroll) return (this.current = 0);
-
-    const visibleSlides = this.visibleSlides;
-
-    if (!visibleSlides.length) return this.current;
-
-    const { axis } = this.#scroll;
-    const { scroller } = this.refs;
-    const centers = visibleSlides.map((slide) => center(slide, axis));
-    const referencePoint = visibleSlides.length > 1 ? scroller.getBoundingClientRect()[axis] : center(scroller, axis);
-    const closestCenter = closest(centers, referencePoint);
-    const closestVisibleSlide = visibleSlides[centers.indexOf(closestCenter)];
-
-    if (!closestVisibleSlide) return (this.current = 0);
-
-    const index = slides.indexOf(closestVisibleSlide);
-
-    return (this.current = index);
-  };
-
-  #dragging = false;
-
-  /**
-   * Handles the 'mousedown' event to start dragging slides.
-   * @param {MouseEvent} event - The mousedown event.
-   */
-  #handleMouseDown = (event) => {
-    const { slides } = this;
-
-    if (!slides || slides.length <= 1) return;
-    if (!(event.target instanceof Element)) return;
-    if (this.disabled || this.#dragging) return;
-
-    // Check if the event target is within a 3D model interactive element
-    // This prevents the slideshow from capturing drag events when interacting with 3D models
-    if (event.target.closest('model-viewer')) {
-      return;
     }
 
-    event.preventDefault();
-    // Store initial position but don't start handling yet
-    const { axis } = this.#scroll;
-    const startPosition = event[axis];
-
-    const controller = new AbortController();
-    const { signal } = controller;
-    const startTime = performance.now();
-    let previous = startPosition;
-    let velocity = 0;
-    let moved = false;
-    let distanceTravelled = 0;
-
-    this.#dragging = true;
-
     /**
-     * Handles the 'pointermove' event to update the scroll position.
-     * @param {PointerEvent} event - The pointermove event.
+     * Sets 'aria-live' state of the slideshow and 'play-state' of the pagination animation.
+     * @param {string} state - State to set ('running' or 'paused').
      */
-    const onPointerMove = (event) => {
-      const current = event[axis];
-      const initialDelta = startPosition - current;
-
-      if (!initialDelta) return;
-
-      if (!moved) {
-        moved = true;
-        this.setPointerCapture(event.pointerId);
-
-        // Prevent clicks once the user starts dragging
-        document.addEventListener('click', preventDefault, { once: true, signal });
-
-        const movingRight = initialDelta < 0;
-        const movingLeft = initialDelta > 0;
-
-        // Check if the current slideshow should handle this drag
-        const closestSlideshow = this.parentElement?.closest('slideshow-component');
-        const isNested = closestSlideshow instanceof Slideshow && closestSlideshow !== this;
-        const cannotMoveInDirection = (movingRight && this.atStart) || (movingLeft && this.atEnd);
-
-        // Abort and let the parent slideshow handle the drag if we're moving in a direction where nested slideshow can't move
-        if (isNested && cannotMoveInDirection) {
-          controller.abort();
-          return;
-        }
-
-        this.pause();
-        this.setAttribute('dragging', '');
-      }
-
-      // Stop the event from bubbling up to parent slideshow components
-      event.stopImmediatePropagation();
-
-      const delta = previous - current;
-      const timeDelta = performance.now() - startTime;
-      velocity = Math.round((delta / timeDelta) * 1000);
-      previous = current;
-      distanceTravelled += Math.abs(delta);
-
-      this.#scroll.by(delta, { instant: true });
-    };
-
-    /**
-     * Handles the 'pointerup' event to stop dragging slides.
-     * @param {PointerEvent} event - The pointerup event.
-     */
-    const onPointerUp = async (event) => {
-      controller.abort();
-      const { current, slides } = this;
-      const { scroller } = this.refs;
-
-      this.#dragging = false;
-
-      if (!slides?.length || !scroller) return;
-
-      const direction = Math.sign(velocity);
-      const next = this.#sync();
-
-      const modifier = current !== next || Math.abs(velocity) < 10 || distanceTravelled < 10 ? 0 : direction;
-      const newIndex = clamp(next + modifier, 0, slides.length - 1);
-
-      const newSlide = slides[newIndex];
-      const currentIndex = this.current;
-
-      if (!newSlide) throw new Error(`Slide not found at index ${newIndex}`);
-
-      this.#scroll.to(newSlide);
-
-      this.removeAttribute('dragging');
-      this.releasePointerCapture(event.pointerId);
-
-      this.#centerSelectedThumbnail(newIndex);
-
-      this.dispatchEvent(
-        new SlideshowSelectEvent({
-          index: newIndex,
-          previousIndex: currentIndex,
-          userInitiated: true,
-          trigger: 'drag',
-          slide: newSlide,
-          id: newSlide.getAttribute('slide-id'),
-        })
-      );
-
-      this.current = newIndex;
-
-      await this.#scroll.finished;
-
-      // It's possible that the user started dragging again before the scroll finished
-      if (this.#dragging) return;
-
-      this.#scroll.snap = true;
-      this.resume();
-    };
-
-    this.#scroll.snap = false;
-
-    document.addEventListener('pointermove', onPointerMove, { signal });
-    document.addEventListener('pointerup', onPointerUp, { signal });
-    /**
-     * pointerDown calls onPointerUp to fix an issue where the first tap-and-drag
-     * on the zoom dialog is captured by the pointerMove/pointerUp listeners,
-     * sometimes causing the slideshow to change slides unexpectedly
-     */
-    document.addEventListener('pointerdown', onPointerUp, { signal });
-    document.addEventListener('pointercancel', onPointerUp, { signal });
-    document.addEventListener('pointercapturelost', onPointerUp, { signal });
-  };
-
-  #handlePointerEnter = () => {
-    this.setAttribute('actioned', '');
-  };
-
-  get slides() {
-    return this.refs.slides?.filter((slide) => !slide.hasAttribute('hidden') || slide.hasAttribute('reveal'));
-  }
-
-  /**
-   * The initial slide index.
-   * @type {number}
-   */
-  get initialSlideIndex() {
-    const initialSlide = this.getAttribute('initial-slide');
-    if (initialSlide == null) return 0;
-
-    return parseInt(initialSlide, 10);
-  }
-
-  /**
-   * Pause the slideshow when the page is hidden.
-   */
-  #handleVisibilityChange = () => (document.hidden ? this.suspend() : this.resume());
-
-  #updateControlsVisibility() {
-    if (!this.hasAttribute('auto-hide-controls')) return;
-
-    const { scroller, slideshowControls } = this.refs;
-
-    if (!(slideshowControls instanceof HTMLElement)) return;
-
-    slideshowControls.hidden = scroller.scrollWidth <= scroller.offsetWidth;
-  }
-
-  /**
-   * Setup IntersectionObserver for efficient visibility tracking of slides
-   */
-  #setupIntersectionObserver() {
-    const { slides, scroller } = this.refs;
-    if (!slides?.length) return;
-
-    if (this.#intersectionObserver) {
-      this.#intersectionObserver.disconnect();
+    setSlideshowState(state) {
+      this.style.setProperty('--play-state', state);
+      this.slideshow.setAttribute('aria-live', state === 'running' ? 'off' : 'polite');
+      this.autoplayPaused = state === 'paused';
     }
 
-    this.#intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        const allEntries = [
-          ...entries,
-          ...(this.#intersectionObserver ? this.#intersectionObserver.takeRecords() : []),
-        ];
-
-        for (const entry of allEntries) {
-          const slide = /** @type {HTMLElement} */ (entry.target);
-          const isCurrentlyVisible = this.#visibleSlides.includes(slide);
-          const shouldBeVisible = entry.intersectionRatio >= SLIDE_VISIBLITY_THRESHOLD;
-
-          if (shouldBeVisible && !isCurrentlyVisible) {
-            this.#visibleSlides.push(slide);
-          } else if (!shouldBeVisible && isCurrentlyVisible) {
-            const index = this.#visibleSlides.indexOf(slide);
-            if (index > -1) {
-              this.#visibleSlides.splice(index, 1);
-            }
-          }
-        }
-
-        this.#visibleSlides.sort((a, b) => slides.indexOf(a) - slides.indexOf(b));
-        this.#updateVisibleSlides();
-      },
-      {
-        root: scroller,
-        threshold: SLIDE_VISIBLITY_THRESHOLD,
-        // Add small margin to account for sub-pixel rendering
-        rootMargin: '1px',
-      }
-    );
-
-    // Observe all slides - observer will fire initial callback asynchronously
-    slides.forEach((slide) => {
-      this.#intersectionObserver?.observe(slide);
-    });
+    /**
+     * Toggles the autoplay state.
+     * @param {object} evt - Event object.
+     */
+    togglePlayState(evt) {
+      evt.target.classList.toggle('is-paused');
+      this.autoplayEnabled = !this.autoplayEnabled;
+      this.dataset.autoplay = this.autoplayEnabled ? 'true' : 'false';
+      this.autoplayEnabled ? this.startAutoplay() : this.stopAutoplay();
+    }
   }
 
-  /**
-   * Centers the selected thumbnail in the thumbnails container
-   * @param {number} index - The index of the selected thumbnail
-   * @param {ScrollBehavior} [behavior] - The scroll behavior.
-   */
-  #centerSelectedThumbnail(index, behavior = 'smooth') {
-    const selectedThumbnail = this.refs.thumbnails?.[index];
-    if (!selectedThumbnail) return;
-
-    const { thumbnailsContainer } = this.refs;
-    if (!thumbnailsContainer || !(thumbnailsContainer instanceof HTMLElement)) return;
-
-    const { slideshowControls } = this.refs;
-    if (!slideshowControls || !(slideshowControls instanceof HTMLElement)) return;
-
-    scrollIntoView(selectedThumbnail, {
-      ancestor: thumbnailsContainer,
-      behavior,
-      block: 'center',
-      inline: 'center',
-    });
-  }
-
-  #updateVisibleSlides() {
-    const { slides } = this;
-    if (!slides || !slides.length) return 0;
-
-    const visibleSlides = this.visibleSlides;
-
-    // If the IntersectionObserver reports zero visible slides, then the slideshow has intersected, but no slides meet the visibility threshold.
-    // Probably that the slideshow's host is mid-animation or zero-layout, like in an animating modal.
-    // Don't stamp aria-hidden="true" on every slide. Set the current slide to the first visible slide.
-    if (visibleSlides.length === 0) return 0;
-
-    // Batch writes to the DOM
-    scheduler.schedule(() => {
-      // Update aria-hidden based on visibility
-      slides.forEach((slide) => {
-        const isVisible = visibleSlides.includes(slide);
-        slide.setAttribute('aria-hidden', `${!isVisible}`);
-      });
-    });
-
-    return visibleSlides.length;
-  }
-}
-
-if (!customElements.get('slideshow-component')) {
-  customElements.define('slideshow-component', Slideshow);
+  customElements.define('slide-show', SlideShow);
 }

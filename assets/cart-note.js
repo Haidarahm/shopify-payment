@@ -1,73 +1,41 @@
-import { Component } from '@theme/component';
-import { debounce, fetchConfig } from '@theme/utilities';
-import { cartPerformance } from '@theme/performance';
-import { CartErrorEvent, CartNoteUpdateEvent } from '@shopify/events';
-
-/**
- * A custom element that displays a cart note.
- */
-class CartNote extends Component {
-  /** @type {AbortController | null} */
-  #activeFetch = null;
-
-  /**
-   * Handles updates to the cart note.
-   * @param {InputEvent} event - The input event in our text-area.
-   */
-  updateCartNote = debounce(async (event) => {
-    if (!(event.target instanceof HTMLTextAreaElement)) return;
-
-    const note = event.target.value;
-    if (this.#activeFetch) {
-      this.#activeFetch.abort();
-    }
-
-    const abortController = new AbortController();
-    this.#activeFetch = abortController;
-
-    // Dispatch the cart note update event before the fetch with a promise for the result
-    const isDialog = Boolean(this.closest('dialog'));
-    const deferredPromise = CartNoteUpdateEvent.createPromise();
-
-    this.dispatchEvent(
-      new CartNoteUpdateEvent({
-        context: isDialog ? 'dialog' : 'cart',
-        note,
-        promise: deferredPromise.promise,
-      })
-    );
-
-    try {
-      const config = fetchConfig('json', {
-        body: JSON.stringify({ note }),
-      });
-
-      const response = await fetch(Theme.routes.cart_update_url, {
-        ...config,
-        signal: abortController.signal,
-      });
-
-      const data = await response.json();
-
-      deferredPromise.resolve({ cart: CartNoteUpdateEvent.createCartFromAjaxResponse(data) });
-    } catch (error) {
-      deferredPromise.reject(error);
-      // Don't dispatch error for user-triggered aborts
-      if (error instanceof Error && error.name !== 'AbortError') {
-        this.dispatchEvent(
-          new CartErrorEvent({
-            error: error.message || 'Failed to update cart note',
-            code: 'SERVICE_UNAVAILABLE',
-          })
-        );
-      }
-    } finally {
-      this.#activeFetch = null;
-      cartPerformance.measureFromEvent('note-update:user-action', event);
-    }
-  }, 200);
-}
-
+/* global debounce */
 if (!customElements.get('cart-note')) {
+  class CartNote extends HTMLElement {
+    constructor() {
+      super();
+      this.disclosure = this.closest('details');
+
+      if (this.disclosure && this.disclosure.matches('.cart-note-disclosure')) {
+        this.cartNoteToggle = this.disclosure.querySelector('.js-show-note');
+      }
+
+      this.fetchRequestOpts = {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        }
+      };
+
+      this.init();
+    }
+
+    init() {
+      this.debouncedHandleNoteChange = debounce(this.handleNoteChange.bind(this), 300);
+      // Save as soon as possible, avoid link-click not providing time to save
+      this.addEventListener('input', this.debouncedHandleNoteChange);
+    }
+
+    handleNoteChange(evt) {
+      if (this.cartNoteToggle) {
+        const label = evt.target.value ? theme.strings.editCartNote : theme.strings.addCartNote;
+        if (this.cartNoteToggle.textContent !== label) this.cartNoteToggle.textContent = label;
+      }
+
+      this.fetchRequestOpts.body = JSON.stringify({ note: evt.target.value });
+      fetch(theme.routes.cartUpdate, this.fetchRequestOpts);
+    }
+  }
+
   customElements.define('cart-note', CartNote);
 }

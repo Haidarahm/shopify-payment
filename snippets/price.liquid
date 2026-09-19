@@ -1,134 +1,84 @@
-{%- doc -%}
-  This snippet is used to render a product card.
-  It is used in the product block,featured product block, and the product card block.
+{% comment %}
+  Parameters:
+  - product {Object} - Product object.
+  - show_currency_code {Boolean} - Use 'money_with_currency' instead of 'money'.
+  - show_labels {Boolean} - Show Sale/Sold Out labels (optional, default is false).
+  - for_variant_picker {Boolean} - Uses variant price and markup for display of all variant states (optional, default is false).
+  - current_variant {Object} - Current variant, if for_variant_picker is true.
 
-  @param {product} product_resource - The product to render
-  @param {boolean} [show_unit_price] - Whether to show the unit price
-  @param {boolean} [show_sale_price_first] - Whether to show the sale price first
-{%- enddoc -%}
-
-{% render 'price-styles' %}
+  Usage:
+  {% render 'price', product: product %}
+{% endcomment %}
 
 {%- liquid
-  assign show_unit_price = show_unit_price | default: false
-  assign show_sale_price_first = show_sale_price_first | default: false
-  assign selected_variant = product_resource.selected_or_first_available_variant
-  assign price = selected_variant.price
-  assign compare_at_price = selected_variant.compare_at_price
+  assign variant = current_variant | default: product.variants | sort: 'price' | first
 
-  assign show_compare_price = false
-  if compare_at_price > price
-    assign show_compare_price = true
-  endif
-
-  if product_resource == blank
-    assign price = 1999
-  endif
-
-  # Check if variant has volume pricing
-  assign has_volume_pricing = null
-  assign price_min = null
-  assign price_max = null
-
-  # For product cards (collection/search pages), calculate min/max across all variants
-  # For product pages, only use the selected variant's pricing
-  assign is_product_card = false
-  if template.name != 'product'
-    assign is_product_card = true
-  endif
-
-  if is_product_card
-    assign price_min = product_resource.price_min
-    assign price_max = product_resource.price_max
-    assign has_volume_pricing = product_resource.quantity_price_breaks_configured? | default: false
-  else
-    # Product page: only use selected variant's pricing
-    if selected_variant.quantity_price_breaks.size > 0
-      assign has_volume_pricing = true
-      assign price_min = selected_variant.quantity_price_breaks.last.price
-      assign price_max = selected_variant.price
+  if for_variant_picker
+    if current_variant == false
+      assign available = true
     endif
-  endif
-
-  # Determine if currency code should be shown
-  assign use_currency = false
-  if product.handle == product_resource.handle
-    if settings.currency_code_enabled_product_pages
-      assign use_currency = true
-    endif
-  elsif settings.currency_code_enabled_product_cards
-    assign use_currency = true
-  endif
-
-  # Format all prices
-  if use_currency
-    assign price = price | money_with_currency
-    assign compare_at_price = compare_at_price | money_with_currency
-    assign price_min = price_min | money_with_currency
-    assign price_max = price_max | money_with_currency
   else
-    assign price = price | money
-    assign compare_at_price = compare_at_price | money
-    assign price_min = price_min | money
-    assign price_max = price_max | money
+    assign for_variant_picker = false
+    assign available = variant.available | default: false
   endif
+
+  assign compare_at_price = variant.compare_at_price
+  assign price = variant.price | default: 1999
 -%}
 
-<div ref="priceContainer">
-  {% if has_volume_pricing %}
-    {% comment %} Volume pricing display {% endcomment %}
-    {% if show_compare_price %}
-      <span class="price-item__group compare-at-price">
-        <span class="visually-hidden">{{ 'content.price_regular' | t }}&nbsp;</span>
-        {{- compare_at_price -}}
-      </span>
-    {% endif %}
-    <span class="price-item__group price">
-      <span class="visually-hidden">{{ 'content.price_range' | t }}&nbsp;</span>
-      {{ price_min }} - {{ price_max }}
+<div class="price{%- if compare_at_price > price %} price--on-sale{% endif -%}
+                 {%- if available == false %} price--sold-out{% endif -%}">
+  <div class="price__default">
+    {%- if product.price_varies -%}
+      {%- if for_variant_picker == false -%}
+        <span class="price__from">{{ 'products.product.from' | t }}</span>
+      {%- elsif for_variant_picker and current_variant == false -%}
+        <span class="price__from">{{ 'products.product.from' | t }}</span>
+      {%- endif -%}
+    {%- endif %}
+    <span class="price__current" style="display: inline-block;">
+      {%- if show_currency_code -%}
+        {{ price | money_with_currency }}
+      {%- else -%}
+        {{ price | money }}
+      {%- endif -%}
     </span>
-  {% else %}
-    {% comment %} Standard pricing display: render only the active branch (regular or sale) {% endcomment %}
-    {% if show_compare_price %}
-      {% if show_sale_price_first %}
-        <span class="price-item__group price">
-          <span class="visually-hidden">{{ 'content.price_sale' | t }}&nbsp;</span>
-          {{ price | default: '&nbsp;' }}
-        </span>
-        <span class="price-item__group price-item--regular compare-at-price">
-          <span class="visually-hidden">{{ 'content.price_regular' | t }}&nbsp;</span>
-          {{- compare_at_price -}}
-        </span>
-      {% else %}
-        <span class="price-item__group price-item--regular compare-at-price">
-          <span class="visually-hidden">{{ 'content.price_regular' | t }}&nbsp;</span>
-          {{- compare_at_price -}}
-        </span>
-        <span class="price-item__group price">
-          <span class="visually-hidden">{{ 'content.price_sale' | t }}&nbsp;</span>
-          {{ price | default: '&nbsp;' }}
-        </span>
-      {% endif %}
-    {% else %}
-      <span class="price">{{ price | default: '&nbsp;' }}</span>
+    {% if for_variant_picker or compare_at_price > price -%}
+      <span class="price__was">
+        {%- if compare_at_price > price -%}
+          {{- compare_at_price | money -}}
+        {%- endif -%}
+      </span>
+    {%- endif -%}
+  </div>
+
+  {% if show_labels %}
+    {% if settings.prod_sold_out_show and product.available == false %}
+      <span class="price-label price-label--sold-out">{{ 'products.product.sold_out' | t }}</span>
+    {% elsif settings.prod_pre_order_label_show and product.template_suffix contains 'preorder' %}
+      <span class="price-label price-label--preorder">{{ 'products.product.preorder' | t }}</span>
+    {% elsif settings.prod_sale_show and variant.compare_at_price > variant.price %}
+      <span class="price-label price-label--sale">{{ 'products.product.sale' | t }}</span>
     {% endif %}
   {% endif %}
-  {%- if selected_variant.unit_price and show_unit_price %}
-    {%- liquid
-      if use_currency
-        assign unit_price = selected_variant.unit_price | money_with_currency
-      else
-        assign unit_price = selected_variant.unit_price | money
-      endif
-    -%}
-    {% render 'unit-price', price: unit_price, measurement: selected_variant.unit_price_measurement %}
-  {%- endif -%}
+
+  {% if for_variant_picker or variant.unit_price_measurement %}
+    <div class="unit-price"{% if variant.unit_price_measurement == nil %} hidden{% endif %}>
+      <span class="visually-hidden">{{ 'products.product.price.unit_price' | t }}</span>
+      <span class="unit-price__price">{{ variant.unit_price | money }}</span>
+      <span class="unit-price__separator">{{ 'products.product.price.unit_price_separator' | t }}</span>
+      <span class="unit-price__unit">
+        {%- if variant.unit_price_measurement.reference_value != 1 -%}
+          {{- variant.unit_price_measurement.reference_value -}}
+        {%- endif -%}
+        {{ variant.unit_price_measurement.reference_unit }}
+      </span>
+    </div>
+  {% endif %}
+
+  {% if for_variant_picker %}
+    <div class="price__no-variant" hidden>
+      <strong class="price__current" style="display: inline-block;">{{ 'products.variant.non_existent' | t }}</strong>
+    </div>
+  {% endif %}
 </div>
-{%- if has_volume_pricing -%}
-  <small
-    ref="volumePricingNote"
-    class="volume-pricing-note"
-  >
-    {{- 'content.volume_pricing_available' | t -}}
-  </small>
-{%- endif -%}

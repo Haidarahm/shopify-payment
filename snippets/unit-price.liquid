@@ -1,18 +1,15 @@
-{%- doc -%}
-  Renders the unit price, including its measurement.
-
-  @param {object} price - The unit price (money or string).
-  @param {object} measurement - The unit_price_measurement object.
-
-  @example
-  {% render 'unit-price', price: variant.unit_price, measurement: variant.unit_price_measurement %}
-  @example
-  {% render 'unit-price', price: line_item.unit_price | money_with_currency, measurement: line_item.unit_price_measurement }
-{%- enddoc -%}
-
-{% render 'price-styles' %}
-
-<small class="unit-price">
-  <span class="visually-hidden">{{ 'accessibility.unit_price' | t }}</span>
-  {{ price | unit_price_with_measurement: measurement }}
-</small>
+{%- if variant.unit_price_measurement -%}
+  {%- capture unit_price_base_unit -%}
+    {%- if variant.unit_price_measurement -%}
+      {%- if variant.unit_price_measurement.reference_value != 1 -%}
+        {{- variant.unit_price_measurement.reference_value -}}
+      {%- endif -%}
+      {{- variant.unit_price_measurement.reference_unit -}}
+    {%- endif -%}
+  {%- endcapture -%}
+  <div class="unit-price {{ class }}">
+    <span class="unit-price__price theme-money">{{ variant.unit_price | money }}</span>
+    <span class="unit-price__separator">{{ 'products.product.price.unit_price_separator' | t }}</span>
+    <span class="unit-price__unit">{{ unit_price_base_unit }}</span>
+  </div>
+{%- endif -%}
